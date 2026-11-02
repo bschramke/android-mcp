@@ -1,16 +1,33 @@
-use rmcp::{ServiceExt, tool, tool_router, transport::stdio};
-use std::process::ExitCode;
+use rmcp::{
+    ServiceExt,
+    model::{CallToolResult, ContentBlock},
+    tool, tool_router,
+    transport::stdio,
+};
+use std::{path::PathBuf, process::ExitCode};
 
 mod adb;
 
 #[derive(Clone)]
-struct HelloWorldServer;
+struct AndroidMcpServer {
+    adb_executable: PathBuf,
+}
 
 #[tool_router(server_handler)]
-impl HelloWorldServer {
-    #[tool(description = "Return a Hello World greeting")]
-    fn hello_world(&self) -> String {
-        "Hello, world!".to_owned()
+impl AndroidMcpServer {
+    #[tool(
+        description = "List Android devices visible to the local ADB server, including offline and unauthorized devices"
+    )]
+    async fn adb_list_devices(&self) -> CallToolResult {
+        match adb::list_devices(&self.adb_executable).await {
+            Ok(devices) => match serde_json::to_string(&devices) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize ADB device list: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
     }
 }
 
@@ -26,8 +43,8 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let _adb_executable = adb::resolve_executable().await?;
-    let service = HelloWorldServer.serve(stdio()).await?;
+    let adb_executable = adb::resolve_executable().await?;
+    let service = AndroidMcpServer { adb_executable }.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
 }
