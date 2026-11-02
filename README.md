@@ -48,7 +48,9 @@ daemon or require a connected device. It verifies executable availability, not
 device access or future ADB server health. Tool calls must still handle their own
 ADB failures. stdout remains reserved for MCP messages.
 
-### Available tool
+### Available tools
+
+#### adb_list_devices
 
 `adb_list_devices` takes no arguments and runs `adb devices -l` using the
 executable resolved during startup. The call has a five-second timeout and may
@@ -78,6 +80,42 @@ timeouts, malformed output, and invalid UTF-8 produce MCP tool results with
 `isError: true`, without terminating the MCP connection. ADB stdout and stderr
 are captured, never forwarded directly to the MCP protocol stream. Device serial
 numbers and metadata are returned to the calling MCP client.
+
+#### adb_device_info
+
+Provide a device serial number as a required string argument:
+
+```json
+{"serial": "emulator-5554"}
+```
+
+The tool runs exactly `adb -s <serial> shell getprop` once using the resolved ADB
+executable, without shell interpolation. The serial is passed as one literal
+argument and must not be empty or contain whitespace or NUL characters. The
+entire command has a five-second timeout.
+
+The JSON text result preserves the nested `DeviceInfo` structure:
+
+| Result group | Fields and Android properties |
+| --- | --- |
+| `serial` | The requested device serial number |
+| `product` | `brand`, `manufacturer`, `model`, `device`, `name`, `locale`, `first_api_level` from the corresponding `ro.product.*` properties |
+| `hardware` | `board` from `ro.product.board`, `hardware` from `ro.hardware`, and `soc_manufacturer`/`soc_model` from `ro.soc.manufacturer`/`ro.soc.model` |
+| `hardware.cpu` | `abi`, `abilist`, `abilist32`, `abilist64` from `ro.product.cpu.*`; ABI lists are split on commas |
+| `android` | `release`, `api_level`, `security_patch` from `ro.build.version.release`, `ro.build.version.sdk`, `ro.build.version.security_patch` |
+| `build` | `id`, `fingerprint`, `incremental`, `build_type`, `tags` from `ro.build.id`, `ro.build.fingerprint`, `ro.build.version.incremental`, `ro.build.type`, `ro.build.tags` |
+| `boot_completed` | `sys.boot_completed`: `1` becomes `true`, `0` becomes `false` |
+| `is_emulator` | `ro.kernel.qemu`: `1` becomes `true`, `0` becomes `false` |
+
+Missing or empty scalar properties are `null`; missing ABI lists are `[]`.
+Unknown boolean values remain `null`, so a missing emulator flag is not treated
+as proof of a physical device. Invalid nonempty API-level numbers, malformed or
+empty property output, invalid UTF-8, unavailable/offline/unauthorized devices,
+and command failures/timeouts produce tool errors. The MCP connection remains
+available after a tool error.
+
+Only the documented properties are returned, never the complete property dump.
+This tool does not add fields or extra device queries to `adb_list_devices`.
 
 ## Connect to an MCP client
 
@@ -154,13 +192,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices \
+	--tools adb_list_devices,adb_device_info \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices` as the enabled tool.
+binary path, environment variables, and `adb_list_devices,adb_device_info` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or
@@ -193,7 +231,7 @@ Official references:
 ### Tests
 
 Run `cargo test` to execute the stdio integration tests. They cover MCP
-initialization, tool discovery, device listing, unknown tools, clean server shutdown,
+initialization, tool discovery, device listing, device info, unknown tools, clean server shutdown,
 ADB startup failures, and PATH/SDK fallback ordering. Each server process gets an
 isolated executable-search environment. Temporary SDK layouts are created with
 the test-only `tempfile` dependency. The process fixtures currently target Unix systems
@@ -202,6 +240,10 @@ controlled executables for startup tests. MCP device-list tests compile a small
 Rust ADB fixture from `tests/support/adb_stub.rs` once per suite using `rustc`.
 The fixture checks the exact ADB arguments and simulates device lists and
 failures, so no real ADB installation or Android device is needed.
+Full getprop responses are loaded from files with `include_str!()`, including
+anonymized TC57 and ARM64 emulator dumps and a synthetic full-mapping profile.
+See [getprop fixtures](tests/fixtures/getprop/README.md) for provenance,
+anonymization rules, and the expected differences between the device profiles.
 Both integration test suites are skipped on non-Unix platforms.
 
 Run the suites independently with:

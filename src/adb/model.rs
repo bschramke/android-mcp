@@ -35,3 +35,58 @@ pub struct AndroidDevice {
 pub struct DeviceList {
     pub devices: Vec<AndroidDevice>,
 }
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct CpuInfo {
+    pub abi: Option<String>,
+    pub abilist: Vec<String>,
+    pub abilist32: Vec<String>,
+    pub abilist64: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct HardwareInfo {
+    pub board: Option<String>,
+    pub hardware: Option<String>,
+    pub soc_manufacturer: Option<String>,
+    pub soc_model: Option<String>,
+    pub cpu: CpuInfo,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct ProductInfo {
+    pub brand: Option<String>,
+    pub manufacturer: Option<String>,
+    pub model: Option<String>,
+    pub device: Option<String>,
+    pub name: Option<String>,
+    pub locale: Option<String>,
+    pub first_api_level: Option<u32>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct AndroidInfo {
+    pub release: Option<String>,
+    pub api_level: Option<u32>,
+    pub security_patch: Option<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct BuildInfo {
+    pub id: Option<String>,
+    pub fingerprint: Option<String>,
+    pub incremental: Option<String>,
+    pub build_type: Option<String>,
+    pub tags: Option<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct DeviceInfo {
+    pub serial: String,
+    pub product: ProductInfo,
+    pub hardware: HardwareInfo,
+    pub android: AndroidInfo,
+    pub build: BuildInfo,
+    pub boot_completed: Option<bool>,
+    pub is_emulator: Option<bool>,
+}
