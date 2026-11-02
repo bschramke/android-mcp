@@ -1,0 +1,2 @@
+11-02 12:00:00.001  1000  1001 I ExampleApp: Synthetic startup message
+11-02 12:00:00.002  1000  1001 W ExampleApp: Synthetic warning

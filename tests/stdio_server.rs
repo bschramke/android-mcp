@@ -55,7 +55,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 2);
+    assert_eq!(tools.len(), 3);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -104,6 +104,25 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
         .ok_or("Missing properties")?;
     assert_eq!(properties.len(), 1);
     assert_eq!(properties["serial"]["type"], "string");
+
+    let logcat_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_logcat")
+        .ok_or("Missing logcat tool")?;
+    assert_eq!(
+        logcat_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
+    );
+    let properties = logcat_tool
+        .input_schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .ok_or("Missing logcat properties")?;
+    assert_eq!(properties.len(), 2);
+    assert_eq!(properties["serial"]["type"], "string");
+    assert_eq!(properties["max_lines"]["default"], 200);
+    assert_eq!(properties["max_lines"]["minimum"], 1);
+    assert_eq!(properties["max_lines"]["maximum"], 2000);
 
     disconnect(client, child).await
 }
@@ -458,4 +477,188 @@ async fn device_info_passes_serial_as_one_literal_argument() -> TestResult {
         serde_json::from_str(&result.content[0].as_text().ok_or("Expected text")?.text)?;
     assert_eq!(info["serial"], "serial;not-a-shell-command");
     disconnect(client, child).await
+}
+
+fn logcat_request(arguments: serde_json::Value) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_logcat");
+    request.arguments = arguments.as_object().cloned();
+    request
+}
+
+#[tokio::test]
+async fn logcat_defaults_to_200_lines_and_returns_only_stdout() -> TestResult {
+    let (client, child) = connect("logcat").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(
+            serde_json::json!({"serial": "emulator-5554"}),
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    assert_eq!(result.content.len(), 1);
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected snapshot JSON")?
+            .text,
+    )?;
+    assert_eq!(
+        snapshot,
+        serde_json::json!({
+            "serial": "emulator-5554", "format": "threadtime",
+            "output": include_str!("fixtures/logcat/threadtime.txt"), "truncated": false
+        })
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn logcat_passes_explicit_limit_and_literal_serial() -> TestResult {
+    let (client, child) = connect("logcat_explicit").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(
+            serde_json::json!({"serial": "serial;not-a-shell-command", "max_lines": 17}),
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&result.content[0].as_text().ok_or("Expected JSON")?.text)?;
+    assert_eq!(snapshot["serial"], "serial;not-a-shell-command");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn logcat_accepts_minimum_and_maximum_line_limits() -> TestResult {
+    let (client, child) = connect("logcat_bounds").await?;
+    for max_lines in [1, 2000] {
+        let result = timeout(
+            TIMEOUT,
+            client.call_tool(logcat_request(
+                serde_json::json!({"serial": "emulator-5554", "max_lines": max_lines}),
+            )),
+        )
+        .await??;
+        assert_ne!(result.is_error, Some(true));
+    }
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn logcat_rejects_invalid_serials_and_line_limits() -> TestResult {
+    let (client, child) = connect("logcat").await?;
+    for arguments in [
+        serde_json::json!({}),
+        serde_json::json!({"serial": 123}),
+        serde_json::json!({"serial": ""}),
+        serde_json::json!({"serial": "device serial"}),
+        serde_json::json!({"serial": "device\u{0000}serial"}),
+        serde_json::json!({"serial": "emulator-5554", "max_lines": 0}),
+        serde_json::json!({"serial": "emulator-5554", "max_lines": 2001}),
+        serde_json::json!({"serial": "emulator-5554", "max_lines": -1}),
+        serde_json::json!({"serial": "emulator-5554", "max_lines": 1.5}),
+        serde_json::json!({"serial": "emulator-5554", "max_lines": "200"}),
+        serde_json::json!({"serial": "emulator-5554", "max_lines": null}),
+    ] {
+        let result = timeout(TIMEOUT, client.call_tool(logcat_request(arguments))).await?;
+        match result {
+            Ok(result) => assert_eq!(result.is_error, Some(true)),
+            Err(ServiceError::McpError(_)) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn empty_logcat_is_a_successful_empty_snapshot() -> TestResult {
+    let (client, child) = connect("logcat_empty").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(
+            serde_json::json!({"serial": "emulator-5554"}),
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&result.content[0].as_text().ok_or("Expected JSON")?.text)?;
+    assert_eq!(snapshot["output"], "");
+    assert_eq!(snapshot["truncated"], false);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn oversized_logcat_is_capped_and_server_remains_usable() -> TestResult {
+    let (client, child) = connect("logcat_large").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(
+            serde_json::json!({"serial": "emulator-5554"}),
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&result.content[0].as_text().ok_or("Expected JSON")?.text)?;
+    assert_eq!(snapshot["truncated"], true);
+    assert_eq!(
+        snapshot["output"].as_str().ok_or("Missing output")?.len(),
+        256 * 1024
+    );
+    assert!(
+        timeout(TIMEOUT, client.list_all_tools())
+            .await??
+            .iter()
+            .any(|tool| tool.name == "adb_logcat")
+    );
+    disconnect(client, child).await
+}
+
+async fn assert_logcat_error(mode: &str, message: &str) -> TestResult {
+    let (client, child) = connect(mode).await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(
+            serde_json::json!({"serial": "emulator-5554"}),
+        )),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .as_text()
+            .ok_or("Expected error text")?
+            .text
+            .contains(message)
+    );
+    assert!(
+        timeout(TIMEOUT, client.list_all_tools())
+            .await??
+            .iter()
+            .any(|tool| tool.name == "adb_logcat")
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn logcat_process_failure_is_a_tool_error() -> TestResult {
+    assert_logcat_error("logcat_failure", "device offline").await
+}
+
+#[tokio::test]
+async fn logcat_timeout_is_a_tool_error() -> TestResult {
+    assert_logcat_error("logcat_timeout", "ADB logcat timed out after 5 seconds").await
+}
+
+#[tokio::test]
+async fn excessive_logcat_stderr_is_bounded() -> TestResult {
+    assert_logcat_error("logcat_stderr_large", "stderr exceeded the 16 KiB limit").await
+}
+
+#[tokio::test]
+async fn non_utf8_logcat_is_a_tool_error() -> TestResult {
+    assert_logcat_error("logcat_invalid_utf8", "not valid UTF-8").await
 }

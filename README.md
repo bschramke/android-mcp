@@ -117,6 +117,37 @@ available after a tool error.
 Only the documented properties are returned, never the complete property dump.
 This tool does not add fields or extra device queries to `adb_list_devices`.
 
+#### adb_logcat
+
+Read a bounded snapshot of recent device logs:
+
+```json
+{"serial": "emulator-5554", "max_lines": 200}
+```
+
+`serial` is required. `max_lines` is optional, defaults to 200, and must be an
+integer between 1 and 2000. The tool uses the resolved ADB executable to run
+`adb -s <serial> logcat -d -t <max_lines> -v threadtime`, without a shell or
+user-supplied flags. It is not a continuous stream and never clears the log buffer.
+
+The JSON text result contains `serial`, `format` (`threadtime`), `output`, and
+`truncated`. Empty logs are a successful result with `output: ""`. The collection
+and process wait share a five-second timeout; failure cleanup is bounded to one
+additional second. stdout and stderr are read concurrently and bounded while
+reading, not collected without limits and shortened afterward.
+
+Output is capped at 256 KiB. If exceeded, the ADB process is terminated and the
+captured prefix is returned with `truncated: true`; the final line may be partial.
+An incomplete UTF-8 character at the byte boundary is omitted. Invalid UTF-8
+elsewhere produces a tool error. stderr is capped at 16 KiB; exceeding that limit
+produces a tool error. Command failures and timeouts also produce tool errors,
+while the MCP server remains available.
+
+Logcat can contain personal data, credentials, or tokens. Logs are returned to
+the calling client without automatic redaction and may be sent to its configured
+model provider. The server does not additionally log or persist the captured
+output. Review the requested device and tool approval before retrieving logs.
+
 ## Connect to an MCP client
 
 Build the executable from the android-mcp repository:
@@ -192,13 +223,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_device_info \
+	--tools adb_list_devices,adb_device_info,adb_logcat \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_device_info` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_device_info,adb_logcat` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or
@@ -231,7 +262,7 @@ Official references:
 ### Tests
 
 Run `cargo test` to execute the stdio integration tests. They cover MCP
-initialization, tool discovery, device listing, device info, unknown tools, clean server shutdown,
+initialization, tool discovery, device listing, device info, logcat snapshots, unknown tools, clean server shutdown,
 ADB startup failures, and PATH/SDK fallback ordering. Each server process gets an
 isolated executable-search environment. Temporary SDK layouts are created with
 the test-only `tempfile` dependency. The process fixtures currently target Unix systems
@@ -245,6 +276,10 @@ anonymized TC57 and ARM64 emulator dumps and a synthetic full-mapping profile.
 See [getprop fixtures](tests/fixtures/getprop/README.md) for provenance,
 anonymization rules, and the expected differences between the device profiles.
 Both integration test suites are skipped on non-Unix platforms.
+
+Logcat tests use only synthetic data in `tests/fixtures/logcat/threadtime.txt` and
+controlled fixture modes for empty output, limits, failures, and timeouts. They
+do not read actual device logs.
 
 Run the suites independently with:
 

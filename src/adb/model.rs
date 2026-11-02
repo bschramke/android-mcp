@@ -37,6 +37,14 @@ pub struct DeviceList {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize)]
+pub struct LogcatSnapshot {
+    pub serial: String,
+    pub format: String,
+    pub output: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
 pub struct CpuInfo {
     pub abi: Option<String>,
     pub abilist: Vec<String>,
