@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 rmcp = { version = "3.8.0", default-features = false, features = ["server", "macros", "transport-io"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time"] }
 
 [dev-dependencies]
 rmcp = { version = "3.8.0", default-features = false, features = ["client"] }
-tokio = { version = "1", features = ["process", "time"] }
+tempfile = "3"

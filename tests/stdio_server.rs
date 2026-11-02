@@ -1,39 +1,15 @@
-use std::{error::Error, process::Stdio, time::Duration};
+#![cfg(unix)]
 
-use rmcp::{
-    RoleClient, ServiceExt,
-    model::CallToolRequestParams,
-    service::{RunningService, ServiceError},
-};
-use tokio::{
-    process::{Child, Command},
-    time::timeout,
-};
+mod support;
 
-type TestResult<T = ()> = Result<T, Box<dyn Error>>;
-type Client = RunningService<RoleClient, ()>;
-
-const TIMEOUT: Duration = Duration::from_secs(10);
+use rmcp::{model::CallToolRequestParams, service::ServiceError};
+use support::{Client, TIMEOUT, TestResult, connect_command, disconnect, server_command};
+use tokio::{process::Child, time::timeout};
 
 async fn connect() -> TestResult<(Client, Child)> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_android-mcp"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .kill_on_drop(true)
-        .spawn()?;
-
-    let stdout = child.stdout.take().ok_or("Server stdout is unavailable")?;
-    let stdin = child.stdin.take().ok_or("Server stdin is unavailable")?;
-    let client = timeout(TIMEOUT, ().serve((stdout, stdin))).await??;
-    Ok((client, child))
-}
-
-async fn disconnect(mut client: Client, mut child: Child) -> TestResult {
-    timeout(TIMEOUT, client.close()).await??;
-    let exit = timeout(TIMEOUT, child.wait()).await??;
-    assert!(exit.success(), "Server exited unsuccessfully: {exit}");
-    Ok(())
+    let mut command = server_command();
+    command.env("ANDROID_MCP_ADB", "/usr/bin/true");
+    connect_command(command).await
 }
 
 #[tokio::test]
