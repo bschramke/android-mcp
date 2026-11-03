@@ -130,9 +130,79 @@ integer between 1 and 2000. The tool uses the resolved ADB executable to run
 `adb -s <serial> logcat -d -t <max_lines> -v threadtime`, without a shell or
 user-supplied flags. It is not a continuous stream and never clears the log buffer.
 
+Optional filters can be used individually or combined:
+
+```json
+{
+	"serial": "emulator-5556",
+	"max_lines": 200,
+	"pid": 2210,
+	"tags": ["ErrorProcessor", "AudioController"],
+	"priority": "warn"
+}
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `pid` | Process ID from 1 to 2147483647; passed as `--pid=<pid>` |
+| `package` | Android application ID; resolve its running main-process PID for this snapshot; mutually exclusive with `pid` |
+| `tags` | Exact tag names combined with OR; omitted or `[]` means no tag restriction |
+| `priority` | Minimum level: `verbose`, `debug`, `info`, `warn`, `error`, or `fatal` |
+
+PID, tag selection, and minimum priority are combined with AND. For example,
+`warn` includes warnings, errors, and fatal entries. The example produces these
+additional native logcat arguments: `--pid=2210`, `ErrorProcessor:W`,
+`AudioController:W`, and `*:S`. With tags but no priority, each tag uses `:V` to
+include all levels; `*:S` suppresses other tags. With priority but no tags, the
+filter is `*:<level>`, applying the minimum priority to every tag.
+
+At most 20 tags are accepted, each containing 1-128 ASCII letters/digits or
+`._/+-@`, without a leading `-`. Whitespace, wildcards, colons, shell
+metacharacters, and arbitrary filter expressions are rejected. Tag matching is
+case-sensitive. `pid`, `package`, and `priority` may also be `null` to leave them unset;
+`tags` must be an array when supplied.
+
+To select an app's running main process instead of supplying its PID:
+
+```json
+{
+	"serial": "emulator-5554",
+	"package": "com.github.bschramke.myfinance",
+	"priority": "warn"
+}
+```
+
+Before each snapshot, the server runs
+`adb -s <serial> shell pidof <package>` and passes the resulting PID to logcat as
+`--pid=<pid>`. The package name is passed as a literal argument and must contain
+at least two dot-separated ASCII segments, each starting with a letter and
+containing only letters, digits, or underscores, with a total length of at most
+255 characters. `package` and `pid` cannot both be set. Package selection can be
+combined with tags and minimum priority in the same way as an explicit PID.
+
+PID lookup must return exactly one positive process ID. A non-running app,
+multiple PIDs, malformed output, unavailable device, or unsupported `pidof`
+produces a tool error; the server never falls back to unfiltered logs. Lookup
+stdout is capped at 4 KiB and stderr at 16 KiB while reading. These checks do not
+start the app. No PID is cached between requests.
+
+Package filtering covers only the currently running main process with that exact
+name, not additional processes such as `<package>:worker` or logs from previous
+process IDs. An app can restart between lookup and capture, so the snapshot is
+not an atomic guarantee of package identity across process restarts.
+
+Filtering is performed by device logcat, not by parsing the returned text in the
+server. No filters preserves the previous command and device-default filtering.
+Filters can yield fewer than the requested number of entries or an empty result;
+`max_lines` does not promise that many matching entries, and stack traces can
+span multiple text lines. Devices that do not support native PID filtering return
+a tool error rather than silently ignoring the filter. All existing timeout,
+output-size, and privacy protections apply unchanged.
+
 The JSON text result contains `serial`, `format` (`threadtime`), `output`, and
 `truncated`. Empty logs are a successful result with `output: ""`. The collection
-and process wait share a five-second timeout; failure cleanup is bounded to one
+and process wait, including package PID lookup when requested, share one
+five-second timeout; failure cleanup is bounded to one
 additional second. stdout and stderr are read concurrently and bounded while
 reading, not collected without limits and shortened afterward.
 
@@ -278,7 +348,8 @@ anonymization rules, and the expected differences between the device profiles.
 Both integration test suites are skipped on non-Unix platforms.
 
 Logcat tests use only synthetic data in `tests/fixtures/logcat/threadtime.txt` and
-controlled fixture modes for empty output, limits, failures, and timeouts. They
+controlled fixture modes for exact filter arguments, validation, empty output,
+limits, failures, and timeouts. They
 do not read actual device logs.
 
 Run the suites independently with:

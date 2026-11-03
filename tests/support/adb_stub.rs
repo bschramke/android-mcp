@@ -1,5 +1,6 @@
 use std::{
     env,
+    fs::{self, OpenOptions},
     io::{self, Write},
     process::ExitCode,
     thread,
@@ -11,16 +12,104 @@ fn main() -> ExitCode {
         println!("Android Debug Bridge version 1.0.41");
         return ExitCode::SUCCESS;
     }
-    if args.len() == 8
+    if args.len() == 5 && args[0] == "-s" && args[2..4] == ["shell", "pidof"] {
+        if args[1] != "emulator-5554" || args[4] != "com.github.bschramke.myfinance" {
+            eprintln!("Unexpected pidof serial or package argument");
+            return ExitCode::FAILURE;
+        }
+        let mode = env::var("ANDROID_MCP_TEST_ADB_MODE").unwrap_or_default();
+        let trace = env::var_os("ANDROID_MCP_TEST_PACKAGE_TRACE").unwrap();
+        writeln!(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&trace)
+                .unwrap(),
+            "pidof"
+        )
+        .unwrap();
+        match mode.as_str() {
+            "logcat_package" | "logcat_package_combined" => println!("1000"),
+            "logcat_package_fresh" => {
+                let count = fs::read_to_string(&trace)
+                    .unwrap()
+                    .lines()
+                    .filter(|line| *line == "pidof")
+                    .count();
+                println!("{}", if count == 1 { 1000 } else { 2000 });
+            }
+            "logcat_package_absent" => return ExitCode::FAILURE,
+            "logcat_package_empty" => {}
+            "logcat_package_offline" => {
+                eprintln!("device offline");
+                return ExitCode::FAILURE;
+            }
+            "logcat_package_unsupported" => {
+                eprintln!("pidof: not found");
+                return ExitCode::from(127);
+            }
+            "logcat_package_invalid" => println!("not-a-pid"),
+            "logcat_package_zero" => println!("0"),
+            "logcat_package_multiple" => println!("1000 2000"),
+            "logcat_package_invalid_utf8" => {
+                io::stdout().write_all(&[0xff, 0xfe]).unwrap();
+            }
+            "logcat_package_timeout" => loop {
+                thread::park();
+            },
+            "logcat_package_stdout_large" => {
+                let _ = io::stdout().write_all(&vec![b'1'; 8192]);
+                loop {
+                    thread::park();
+                }
+            }
+            "logcat_package_stderr_large" => {
+                let _ = io::stderr().write_all(&vec![b'e'; 20 * 1024]);
+                loop {
+                    thread::park();
+                }
+            }
+            "logcat_package_budget" => {
+                thread::sleep(std::time::Duration::from_secs(3));
+                println!("1000");
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() >= 8
         && args[0] == "-s"
         && args[2..5] == ["logcat", "-d", "-t"]
-        && args[6..] == ["-v", "threadtime"]
+        && args[6..8] == ["-v", "threadtime"]
     {
         if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
             eprintln!("Unexpected logcat serial argument");
             return ExitCode::FAILURE;
         }
         let mode = env::var("ANDROID_MCP_TEST_ADB_MODE").unwrap_or_default();
+        let package_pid = if mode.starts_with("logcat_package") {
+            let trace = env::var_os("ANDROID_MCP_TEST_PACKAGE_TRACE").unwrap();
+            let history = fs::read_to_string(&trace).unwrap_or_default();
+            if history.lines().last() != Some("pidof") {
+                eprintln!("Logcat must be preceded by pidof");
+                return ExitCode::FAILURE;
+            }
+            let pid = if mode == "logcat_package_fresh"
+                && history.lines().filter(|line| *line == "pidof").count() > 1
+            {
+                "--pid=2000"
+            } else {
+                "--pid=1000"
+            };
+            writeln!(
+                OpenOptions::new().append(true).open(&trace).unwrap(),
+                "logcat"
+            )
+            .unwrap();
+            Some(pid)
+        } else {
+            None
+        };
         let valid_lines = match mode.as_str() {
             "logcat_explicit" => args[5] == "17",
             "logcat_bounds" => args[5] == "1" || args[5] == "2000",
@@ -30,8 +119,56 @@ fn main() -> ExitCode {
             eprintln!("Unexpected logcat line limit");
             return ExitCode::FAILURE;
         }
+        let expected_filters: &[&str] = match mode.as_str() {
+            "logcat_package" | "logcat_package_budget" | "logcat_package_fresh" => {
+                &[package_pid.unwrap()]
+            }
+            "logcat_package_combined" => {
+                &["--pid=1000", "ExampleApp:W", "AudioController:W", "*:S"]
+            }
+            "logcat_pid" => &["--pid=1000"],
+            "logcat_pid_max" => &["--pid=2147483647"],
+            "logcat_tags" => &["ExampleApp:V", "AudioController:V", "*:S"],
+            "logcat_verbose" => &["*:V"],
+            "logcat_debug" => &["*:D"],
+            "logcat_info" => &["*:I"],
+            "logcat_warn" => &["*:W"],
+            "logcat_error" => &["*:E"],
+            "logcat_fatal" => &["*:F"],
+            "logcat_pid_tags" => &["--pid=1000", "ExampleApp:V", "*:S"],
+            "logcat_pid_priority" => &["--pid=1000", "*:E"],
+            "logcat_tags_priority" => &["ExampleApp:W", "AudioController:W", "*:S"],
+            "logcat_combined" => &["--pid=2210", "ErrorProcessor:W", "AudioController:W", "*:S"],
+            _ => &[],
+        };
+        if args[8..] != *expected_filters {
+            eprintln!("Unexpected logcat filter arguments");
+            return ExitCode::FAILURE;
+        }
         match mode.as_str() {
-            "logcat" | "logcat_explicit" | "logcat_bounds" => {
+            "logcat_package" | "logcat_package_fresh" | "logcat_package_combined" => {
+                print!("{}", include_str!("../fixtures/logcat/threadtime.txt"));
+            }
+            "logcat_package_budget" => {
+                thread::sleep(std::time::Duration::from_secs(3));
+                print!("{}", include_str!("../fixtures/logcat/threadtime.txt"));
+            }
+            "logcat"
+            | "logcat_explicit"
+            | "logcat_bounds"
+            | "logcat_pid"
+            | "logcat_pid_max"
+            | "logcat_tags"
+            | "logcat_verbose"
+            | "logcat_debug"
+            | "logcat_info"
+            | "logcat_warn"
+            | "logcat_error"
+            | "logcat_fatal"
+            | "logcat_pid_tags"
+            | "logcat_pid_priority"
+            | "logcat_tags_priority"
+            | "logcat_combined" => {
                 eprintln!("Synthetic ADB diagnostic, not log output");
                 print!("{}", include_str!("../fixtures/logcat/threadtime.txt"));
             }

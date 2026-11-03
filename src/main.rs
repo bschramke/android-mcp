@@ -25,6 +25,26 @@ struct LogcatRequest {
         range(min = 1, max = 2000)
     )]
     max_lines: u32,
+    #[schemars(
+        description = "Optional process ID; combined with tag and priority filters",
+        range(min = 1, max = 2147483647)
+    )]
+    pid: Option<u32>,
+    #[schemars(
+        description = "Optional Android application package; resolve its running main-process PID for this snapshot; cannot be combined with pid",
+        length(min = 1, max = 255)
+    )]
+    package: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Exact tag names (OR); at most 20 names of 1-128 ASCII letters/digits or ._/+-@, no leading '-', whitespace, wildcards, or filter expressions",
+        length(max = 20)
+    )]
+    tags: Vec<String>,
+    #[schemars(
+        description = "Minimum severity; warn includes warn, error, and fatal; without a priority, selected tags include all levels"
+    )]
+    priority: Option<adb::LogPriority>,
 }
 
 fn default_logcat_lines() -> u32 {
@@ -42,7 +62,17 @@ impl AndroidMcpServer {
         description = "Read a bounded snapshot of recent device logcat output without clearing the log buffer; logs may contain sensitive data"
     )]
     async fn adb_logcat(&self, Parameters(request): Parameters<LogcatRequest>) -> CallToolResult {
-        match adb::logcat(&self.adb_executable, &request.serial, request.max_lines).await {
+        match adb::logcat(
+            &self.adb_executable,
+            &request.serial,
+            request.max_lines,
+            request.pid,
+            &request.tags,
+            request.priority,
+            request.package.as_deref(),
+        )
+        .await
+        {
             Ok(snapshot) => match serde_json::to_string(&snapshot) {
                 Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
                 Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(

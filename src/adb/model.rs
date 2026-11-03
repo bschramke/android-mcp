@@ -1,3 +1,29 @@
+use rmcp::schemars;
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LogPriority {
+    Verbose,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+}
+
+impl LogPriority {
+    pub(super) fn code(self) -> char {
+        match self {
+            Self::Verbose => 'V',
+            Self::Debug => 'D',
+            Self::Info => 'I',
+            Self::Warn => 'W',
+            Self::Error => 'E',
+            Self::Fatal => 'F',
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceStatus {
