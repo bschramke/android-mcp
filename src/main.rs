@@ -122,6 +122,24 @@ impl AndroidMcpServer {
     }
 
     #[tool(
+        description = "Read display resolution, density, rotation, and orientation for an Android device by serial"
+    )]
+    async fn adb_display_info(
+        &self,
+        Parameters(request): Parameters<DeviceInfoRequest>,
+    ) -> CallToolResult {
+        match adb::display_info(&self.adb_executable, &request.serial).await {
+            Ok(info) => match serde_json::to_string(&info) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize ADB display info: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
         description = "List Android devices visible to the local ADB server, including offline and unauthorized devices"
     )]
     async fn adb_list_devices(&self) -> CallToolResult {

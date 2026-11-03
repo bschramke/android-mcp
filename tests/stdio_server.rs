@@ -55,7 +55,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 4);
+    assert_eq!(tools.len(), 5);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -156,6 +156,19 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
             .description
             .as_deref()
             .is_some_and(|description| description.contains("may start the local ADB server"))
+    );
+
+    let display_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_display_info")
+        .ok_or("Missing display-info tool")?;
+    assert_eq!(
+        display_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
+    );
+    assert_eq!(
+        display_tool.input_schema["properties"]["serial"]["type"],
+        "string"
     );
 
     disconnect(client, child).await
@@ -557,10 +570,153 @@ async fn device_info_returns_nested_supported_properties_only() -> TestResult {
             "hardware": {"board": "board", "hardware": "hardware", "soc_manufacturer": "soc-vendor", "soc_model": "soc-model", "cpu": {"abi": "arm64-v8a", "abilist": ["arm64-v8a", "armeabi-v7a"], "abilist32": ["armeabi-v7a"], "abilist64": ["arm64-v8a"]}},
             "android": {"release": "15", "api_level": 35, "security_patch": "2026-10-05"},
             "build": {"id": "BUILD.ID", "fingerprint": "brand/product/device:15/BUILD.ID/123:user/release-keys", "incremental": "123", "build_type": "user", "tags": "release-keys"},
-            "boot_completed": true, "is_emulator": true
+            "boot_completed": true, "is_emulator": true,
+            "display": {
+                "physical_resolution_px": {"width": 1080, "height": 2400},
+                "override_resolution_px": {"width": 720, "height": 1600},
+                "current_resolution_px": {"width": 1600, "height": 720},
+                "density_dpi": 440,
+                "size_dp": {"width": 582, "height": 262},
+                "rotation_degrees": 90,
+                "orientation": "landscape"
+            }
         })
     );
     assert!(!content.text.contains("never expose this"));
+    disconnect(client, child).await
+}
+
+fn display_info_request(serial: &str) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_display_info");
+    request.arguments = serde_json::json!({"serial": serial}).as_object().cloned();
+    request
+}
+
+#[tokio::test]
+async fn display_info_reports_resolution_density_rotation_and_orientation() -> TestResult {
+    let (client, child) = connect("display").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(display_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let info: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected display-info JSON")?
+            .text,
+    )?;
+    assert_eq!(info["physical_resolution_px"]["width"], 1080);
+    assert_eq!(info["physical_resolution_px"]["height"], 2400);
+    assert_eq!(info["override_resolution_px"]["width"], 720);
+    assert_eq!(info["current_resolution_px"]["width"], 1600);
+    assert_eq!(info["current_resolution_px"]["height"], 720);
+    assert_eq!(info["density_dpi"], 440);
+    assert_eq!(info["size_dp"]["width"], 582);
+    assert_eq!(info["size_dp"]["height"], 262);
+    assert_eq!(info["rotation_degrees"], 90);
+    assert_eq!(info["orientation"], "landscape");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn display_info_unknown_output_is_returned_as_null_fields() -> TestResult {
+    let (client, child) = connect("display_unknown").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(display_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let info: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected display-info JSON")?
+            .text,
+    )?;
+    for field in [
+        "physical_resolution_px",
+        "override_resolution_px",
+        "current_resolution_px",
+        "density_dpi",
+        "size_dp",
+        "rotation_degrees",
+        "orientation",
+    ] {
+        assert!(info[field].is_null(), "Expected {field} to be null");
+    }
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn device_info_keeps_properties_when_display_commands_fail() -> TestResult {
+    let (client, child) = connect("info_display_failure").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(device_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let info: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected device-info JSON")?
+            .text,
+    )?;
+    assert_eq!(info["product"]["model"], "Example Phone");
+    assert!(info["display"]["physical_resolution_px"].is_null());
+    assert!(info["display"]["orientation"].is_null());
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn display_info_command_failure_is_a_tool_error() -> TestResult {
+    let (client, child) = connect("display_failure").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(display_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .as_text()
+            .ok_or("Expected display-info error")?
+            .text
+            .contains("ADB wm size failed")
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn display_info_timeout_is_bounded() -> TestResult {
+    let (client, child) = connect("display_timeout").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(display_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .as_text()
+            .ok_or("Expected display-info timeout")?
+            .text
+            .contains("ADB wm size timed out after 5 seconds")
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn display_info_passes_serial_as_one_literal_argument() -> TestResult {
+    let (client, child) = connect("display").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(display_info_request("serial;not-a-shell-command")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
     disconnect(client, child).await
 }
 

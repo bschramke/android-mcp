@@ -116,10 +116,11 @@ Provide a device serial number as a required string argument:
 {"serial": "emulator-5554"}
 ```
 
-The tool runs exactly `adb -s <serial> shell getprop` once using the resolved ADB
-executable, without shell interpolation. The serial is passed as one literal
-argument and must not be empty or contain whitespace or NUL characters. The
-entire command has a five-second timeout.
+The tool runs `adb -s <serial> shell getprop` using the resolved ADB executable,
+without shell interpolation. It then reads display data using `wm size`,
+`wm density`, and `dumpsys window displays`. The serial is passed as one literal
+argument and must not be empty or contain whitespace or NUL characters. All
+commands share one five-second timeout.
 
 The JSON text result preserves the nested `DeviceInfo` structure:
 
@@ -133,6 +134,7 @@ The JSON text result preserves the nested `DeviceInfo` structure:
 | `build` | `id`, `fingerprint`, `incremental`, `build_type`, `tags` from `ro.build.id`, `ro.build.fingerprint`, `ro.build.version.incremental`, `ro.build.type`, `ro.build.tags` |
 | `boot_completed` | `sys.boot_completed`: `1` becomes `true`, `0` becomes `false` |
 | `is_emulator` | `ro.kernel.qemu`: `1` becomes `true`, `0` becomes `false` |
+| `display` | Physical, overridden, and current pixel resolution; effective density in dpi; derived size in dp; rotation and orientation from `wm size`, `wm density`, and `dumpsys window displays` |
 
 Missing or empty scalar properties are `null`; missing ABI lists are `[]`.
 Unknown boolean values remain `null`, so a missing emulator flag is not treated
@@ -141,8 +143,28 @@ empty property output, invalid UTF-8, unavailable/offline/unauthorized devices,
 and command failures/timeouts produce tool errors. The MCP connection remains
 available after a tool error.
 
-Only the documented properties are returned, never the complete property dump.
+Only the documented properties and parsed display fields are returned, never
+the complete property dump or raw `dumpsys` output. Display query failures leave
+the display fields unknown without discarding the other device information.
 This tool does not add fields or extra device queries to `adb_list_devices`.
+
+#### adb_display_info
+
+Provide a device serial number as a required string argument. This tool returns
+the same `DisplayInfo` object embedded in `adb_device_info`, without querying
+the other device properties:
+
+```json
+{"serial": "emulator-5554"}
+```
+
+It uses `wm size` for physical and override resolution, `wm density` for
+physical and override density, and `dumpsys window displays` for the current
+rotation. `current_resolution_px` applies any override and the current rotation;
+`size_dp` is derived from that resolution and the effective density. Orientation
+accounts for the device's natural display orientation. Unknown output formats
+produce `null` fields. ADB command failures, output-limit violations, and the
+shared five-second timeout produce tool errors.
 
 #### adb_logcat
 
@@ -320,13 +342,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_device_info,adb_logcat \
+	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_device_info,adb_logcat` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or

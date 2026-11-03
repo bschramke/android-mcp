@@ -219,6 +219,50 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() == 5 && args[0] == "-s" && args[2] == "shell" && args[3..] == ["wm", "size"] {
+        if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
+            eprintln!("Unexpected display-info serial argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("display_timeout") => loop {
+                thread::park();
+            },
+            Ok("display_failure") | Ok("info_display_failure") => {
+                eprintln!("wm size unavailable");
+                return ExitCode::FAILURE;
+            }
+            Ok("display_unknown") => println!("Physical size: unknown"),
+            _ => println!("Physical size: 1080x2400\nOverride size: 720x1600"),
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 5 && args[0] == "-s" && args[2] == "shell" && args[3..] == ["wm", "density"] {
+        if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
+            eprintln!("Unexpected display-info serial argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("display_unknown") => println!("Physical density: unknown"),
+            _ => println!("Physical density: 420\nOverride density: 440"),
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 6 && args[0] == "-s" && args[2..] == ["shell", "dumpsys", "window", "displays"]
+    {
+        if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
+            eprintln!("Unexpected display-info serial argument");
+            return ExitCode::FAILURE;
+        }
+        let rotation = if env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() == Ok("display_unknown")
+        {
+            "ROTATION_UNKNOWN"
+        } else {
+            "ROTATION_1"
+        };
+        println!("Display: mDisplayId=0\nmRotation={rotation}");
+        return ExitCode::SUCCESS;
+    }
     if args.len() == 4 && args[0] == "-s" && args[2..] == ["shell", "getprop"] {
         if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
             eprintln!("Unexpected serial argument");
@@ -226,6 +270,9 @@ fn main() -> ExitCode {
         }
         match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
             Ok("info") => print!("{}", include_str!("../fixtures/getprop/synthetic.txt")),
+            Ok("info_display_failure") => {
+                print!("{}", include_str!("../fixtures/getprop/synthetic.txt"))
+            }
             Ok("info_tc57") => print!("{}", include_str!("../fixtures/getprop/tc57.txt")),
             Ok("info_emulator") => print!("{}", include_str!("../fixtures/getprop/emulator.txt")),
             Ok("info_partial") => println!("[ro.product.model]: [Partial Phone]\n"),

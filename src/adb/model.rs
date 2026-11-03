@@ -123,4 +123,31 @@ pub struct DeviceInfo {
     pub build: BuildInfo,
     pub boot_completed: Option<bool>,
     pub is_emulator: Option<bool>,
+    pub display: DisplayInfo,
+}
+
+#[derive(Debug, Default, PartialEq, serde::Serialize)]
+pub struct DisplayInfo {
+    pub physical_resolution_px: Option<ScreenDimensions>,
+    pub override_resolution_px: Option<ScreenDimensions>,
+    pub current_resolution_px: Option<ScreenDimensions>,
+    pub density_dpi: Option<u32>,
+    pub size_dp: Option<ScreenDimensions>,
+    pub rotation_degrees: Option<u16>,
+    pub orientation: Option<DisplayOrientation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct ScreenDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayOrientation {
+    Portrait,
+    Landscape,
+    ReversePortrait,
+    ReverseLandscape,
 }

@@ -1,23 +1,21 @@
 use std::{collections::BTreeMap, io, path::Path, process::Stdio, time::Duration};
 
-use tokio::{process::Command, time::timeout};
+use tokio::{
+    process::Command,
+    time::{Instant, timeout_at},
+};
 
-use super::model::{AndroidInfo, BuildInfo, CpuInfo, DeviceInfo, HardwareInfo, ProductInfo};
+use super::{
+    display_info::display_info_until,
+    model::{AndroidInfo, BuildInfo, CpuInfo, DeviceInfo, HardwareInfo, ProductInfo},
+};
 
 pub async fn device_info(executable: &Path, serial: &str) -> io::Result<DeviceInfo> {
-    if serial.is_empty()
-        || serial
-            .chars()
-            .any(|character| character.is_whitespace() || character == '\0')
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Device serial must be nonempty and contain no whitespace or NUL characters",
-        ));
-    }
+    validate_serial(serial)?;
 
-    let output = timeout(
-        Duration::from_secs(5),
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let output = timeout_at(
+        deadline,
         Command::new(executable)
             .args(["-s", serial, "shell", "getprop"])
             .stdin(Stdio::null())
@@ -51,7 +49,25 @@ pub async fn device_info(executable: &Path, serial: &str) -> io::Result<DeviceIn
             format!("ADB getprop output is not valid UTF-8: {error}"),
         )
     })?;
-    parse_device_info(serial, stdout)
+    let mut info = parse_device_info(serial, stdout)?;
+    info.display = display_info_until(executable, serial, deadline)
+        .await
+        .unwrap_or_default();
+    Ok(info)
+}
+
+pub(super) fn validate_serial(serial: &str) -> io::Result<()> {
+    if serial.is_empty()
+        || serial
+            .chars()
+            .any(|character| character.is_whitespace() || character == '\0')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Device serial must be nonempty and contain no whitespace or NUL characters",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_device_info(serial: &str, output: &str) -> io::Result<DeviceInfo> {
@@ -169,6 +185,7 @@ fn parse_device_info(serial: &str, output: &str) -> io::Result<DeviceInfo> {
         },
         boot_completed: boolean("sys.boot_completed"),
         is_emulator: boolean("ro.kernel.qemu"),
+        display: Default::default(),
     })
 }
 
