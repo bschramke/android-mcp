@@ -16,6 +16,12 @@ struct DeviceInfoRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct HealthCheckRequest {
+    #[schemars(description = "Optional ADB serial number for device-specific checks")]
+    serial: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct LogcatRequest {
     #[schemars(description = "ADB serial number identifying the device to read logs from")]
     serial: String,
@@ -58,6 +64,22 @@ struct AndroidMcpServer {
 
 #[tool_router(server_handler)]
 impl AndroidMcpServer {
+    #[tool(
+        description = "Diagnose the ADB executable, server, visible devices, authorization, and read-only shell access; adb devices may start the local ADB server"
+    )]
+    async fn adb_health_check(
+        &self,
+        Parameters(request): Parameters<HealthCheckRequest>,
+    ) -> CallToolResult {
+        let report = adb::health_check(&self.adb_executable, request.serial.as_deref()).await;
+        match serde_json::to_string(&report) {
+            Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                "Cannot serialize ADB health check: {error}"
+            ))]),
+        }
+    }
+
     #[tool(
         description = "Read a bounded snapshot of recent device logcat output without clearing the log buffer; logs may contain sensitive data"
     )]

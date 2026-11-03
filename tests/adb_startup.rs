@@ -71,10 +71,10 @@ async fn unsuccessful_adb_version_fails_before_mcp_startup() -> TestResult {
 }
 
 #[tokio::test]
-async fn unresponsive_adb_fails_before_mcp_startup() -> TestResult {
+async fn excessive_adb_version_output_fails_before_mcp_startup() -> TestResult {
     assert_startup_failure(
         "/usr/bin/yes",
-        "ADB startup check timed out after 5 seconds",
+        "ADB version output exceeded the 4 KiB limit",
     )
     .await
 }

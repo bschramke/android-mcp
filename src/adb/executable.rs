@@ -5,12 +5,19 @@ use std::{
     time::Duration,
 };
 
-use tokio::{process::Command, time::timeout};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::{Child, Command},
+    time::timeout,
+};
+
+const VERSION_OUTPUT_LIMIT: usize = 4 * 1024;
+const VERSION_STDERR_LIMIT: usize = 16 * 1024;
 
 pub async fn resolve_executable() -> io::Result<PathBuf> {
     if let Some(executable) = env::var_os("ANDROID_MCP_ADB") {
         let executable = PathBuf::from(executable);
-        verify_executable(&executable).await?;
+        adb_version(&executable).await?;
         return Ok(executable);
     }
 
@@ -28,8 +35,8 @@ pub async fn resolve_executable() -> io::Result<PathBuf> {
     let mut failures = Vec::new();
     let mut last_kind = io::ErrorKind::NotFound;
     for candidate in candidates {
-        match verify_executable(&candidate).await {
-            Ok(()) => return Ok(candidate),
+        match adb_version(&candidate).await {
+            Ok(_) => return Ok(candidate),
             Err(error) => {
                 last_kind = error.kind();
                 failures.push(format!("{}: {error}", candidate.display()));
@@ -46,18 +53,14 @@ pub async fn resolve_executable() -> io::Result<PathBuf> {
     ))
 }
 
-async fn verify_executable(executable: &Path) -> io::Result<()> {
-    let mut command = Command::new(executable);
-    command
+pub(super) async fn adb_version(executable: &Path) -> io::Result<Vec<u8>> {
+    let mut child = Command::new(executable)
         .arg("version")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-
-    let status = timeout(Duration::from_secs(5), command.status())
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ADB startup check timed out after 5 seconds"))?
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
@@ -67,11 +70,71 @@ async fn verify_executable(executable: &Path) -> io::Result<()> {
             )
         })?;
 
+    match timeout(Duration::from_secs(5), capture_version(&mut child)).await {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = timeout(Duration::from_secs(1), child.kill()).await;
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "ADB startup check timed out after 5 seconds",
+            ))
+        }
+    }
+}
+
+async fn capture_version(child: &mut Child) -> io::Result<Vec<u8>> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("Missing ADB version stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("Missing ADB version stderr"))?;
+    let stdout_read = read_capped(stdout, VERSION_OUTPUT_LIMIT);
+    let stderr_read = read_capped(stderr, VERSION_STDERR_LIMIT);
+    tokio::pin!(stdout_read, stderr_read);
+    let mut stdout = None;
+    let mut stderr = None;
+
+    while stdout.is_none() || stderr.is_none() {
+        tokio::select! {
+            result = &mut stdout_read, if stdout.is_none() => {
+                let (bytes, exceeded) = result?;
+                if exceeded {
+                    return Err(io::Error::other("ADB version output exceeded the 4 KiB limit"));
+                }
+                stdout = Some(bytes);
+            }
+            result = &mut stderr_read, if stderr.is_none() => {
+                let (bytes, exceeded) = result?;
+                if exceeded {
+                    return Err(io::Error::other("ADB version stderr exceeded the 16 KiB limit"));
+                }
+                stderr = Some(bytes);
+            }
+        }
+    }
+
+    let status = child.wait().await?;
+
     if !status.success() {
         return Err(io::Error::other(format!(
-            "ADB startup check failed: adb version returned {status}"
+            "ADB startup check failed: adb version returned {status}: {}",
+            String::from_utf8_lossy(&stderr.unwrap_or_default()).trim()
         )));
     }
 
-    Ok(())
+    Ok(stdout.unwrap_or_default())
+}
+
+async fn read_capped(reader: impl AsyncRead + Unpin, limit: usize) -> io::Result<(Vec<u8>, bool)> {
+    let mut bytes = Vec::new();
+    reader
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await?;
+    let exceeded = bytes.len() > limit;
+    bytes.truncate(limit);
+    Ok((bytes, exceeded))
 }

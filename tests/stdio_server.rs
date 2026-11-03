@@ -55,7 +55,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 3);
+    assert_eq!(tools.len(), 4);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -130,6 +130,34 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     assert_eq!(properties["tags"]["maxItems"], 20);
     assert!(properties.contains_key("priority"));
 
+    let health_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_health_check")
+        .ok_or("Missing health-check tool")?;
+    assert_eq!(
+        health_tool.input_schema.get("type"),
+        Some(&serde_json::json!("object"))
+    );
+    let health_properties = health_tool
+        .input_schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .ok_or("Missing health-check properties")?;
+    assert_eq!(health_properties.len(), 1);
+    assert!(health_properties.contains_key("serial"));
+    assert!(
+        health_tool
+            .input_schema
+            .get("required")
+            .is_none_or(|value| value.as_array().is_some_and(|required| required.is_empty()))
+    );
+    assert!(
+        health_tool
+            .description
+            .as_deref()
+            .is_some_and(|description| description.contains("may start the local ADB server"))
+    );
+
     disconnect(client, child).await
 }
 
@@ -155,6 +183,222 @@ async fn adb_list_devices_returns_device_states_and_metadata() -> TestResult {
         ]})
     );
 
+    disconnect(client, child).await
+}
+
+fn health_check_request(serial: Option<&str>) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_health_check");
+    if let Some(serial) = serial {
+        request.arguments = serde_json::json!({"serial": serial}).as_object().cloned();
+    }
+    request
+}
+
+#[tokio::test]
+async fn health_check_without_serial_skips_device_commands_and_reports_devices() -> TestResult {
+    let (client, child) = connect("devices").await?;
+    let result = timeout(TIMEOUT, client.call_tool(health_check_request(None))).await??;
+    assert_ne!(result.is_error, Some(true));
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "healthy");
+    assert_eq!(report["devices"].as_array().unwrap().len(), 3);
+    assert_eq!(report["shell_uid"], serde_json::Value::Null);
+    assert_eq!(report["shell_is_root"], serde_json::Value::Null);
+    assert_eq!(report["checks"][0]["name"], "adb_binary");
+    assert_eq!(report["checks"][0]["status"], "passed");
+    assert_eq!(report["checks"][1]["name"], "adb_server");
+    assert_eq!(report["checks"][1]["status"], "passed");
+    for check in report["checks"].as_array().unwrap().iter().skip(2) {
+        assert_eq!(check["status"], "skipped");
+    }
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn health_check_online_device_checks_shell_and_reports_non_root_uid() -> TestResult {
+    let (client, child) = connect("health_online").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(health_check_request(Some("emulator-5554"))),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "healthy");
+    assert_eq!(report["shell_uid"], 2000);
+    assert_eq!(report["shell_is_root"], false);
+    assert_eq!(report["checks"][2]["status"], "passed");
+    assert_eq!(report["checks"][3]["status"], "passed");
+    assert_eq!(report["checks"][4]["status"], "passed");
+    assert!(
+        report["checks"][4]["message"]
+            .as_str()
+            .unwrap()
+            .contains("adb root was not tested")
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn health_check_reports_unauthorized_device_without_running_shell() -> TestResult {
+    let (client, child) = connect("devices").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(health_check_request(Some("phone"))),
+    )
+    .await??;
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "unhealthy");
+    assert_eq!(report["checks"][2]["status"], "failed");
+    assert_eq!(report["checks"][3]["status"], "failed");
+    assert_eq!(report["checks"][4]["status"], "skipped");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn health_check_reports_offline_and_missing_devices() -> TestResult {
+    for serial in ["other", "missing"] {
+        let (client, child) = connect("devices").await?;
+        let result = timeout(
+            TIMEOUT,
+            client.call_tool(health_check_request(Some(serial))),
+        )
+        .await??;
+        let report: serde_json::Value = serde_json::from_str(
+            &result.content[0]
+                .as_text()
+                .ok_or("Expected health-check JSON")?
+                .text,
+        )?;
+        assert_eq!(report["status"], "unhealthy");
+        assert_eq!(report["checks"][2]["status"], "failed");
+        assert_eq!(report["checks"][4]["status"], "skipped");
+        disconnect(client, child).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn health_check_reports_shell_failures_and_root_uid_without_adb_root() -> TestResult {
+    let (client, child) = connect("health_shell_failure").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(health_check_request(Some("emulator-5554"))),
+    )
+    .await??;
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "unhealthy");
+    assert_eq!(report["checks"][4]["status"], "failed");
+    assert_eq!(report["shell_uid"], serde_json::Value::Null);
+    disconnect(client, child).await?;
+
+    let (client, child) = connect("health_root").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(health_check_request(Some("emulator-5554"))),
+    )
+    .await??;
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "healthy");
+    assert_eq!(report["shell_uid"], 0);
+    assert_eq!(report["shell_is_root"], true);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn health_check_reports_invalid_shell_uid_as_a_check_failure() -> TestResult {
+    let (client, child) = connect("health_invalid_uid").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(health_check_request(Some("emulator-5554"))),
+    )
+    .await??;
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "unhealthy");
+    assert_eq!(report["checks"][4]["status"], "failed");
+    assert_eq!(report["shell_uid"], serde_json::Value::Null);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn health_check_reports_adb_server_failure_without_mcp_error() -> TestResult {
+    let (client, child) = connect("failure").await?;
+    let result = timeout(TIMEOUT, client.call_tool(health_check_request(None))).await??;
+    assert_ne!(result.is_error, Some(true));
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "unhealthy");
+    assert_eq!(report["checks"][1]["status"], "failed");
+    for check in report["checks"].as_array().unwrap().iter().skip(2) {
+        assert_eq!(check["status"], "skipped");
+    }
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn health_check_bounds_shell_timeout_and_keeps_server_usable() -> TestResult {
+    let (client, child) = connect("health_shell_timeout").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(health_check_request(Some("emulator-5554"))),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let report: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected health-check JSON")?
+            .text,
+    )?;
+    assert_eq!(report["status"], "unhealthy");
+    assert_eq!(report["checks"][4]["status"], "failed");
+    assert!(
+        report["checks"][4]["message"]
+            .as_str()
+            .unwrap()
+            .contains("timed out")
+    );
+
+    let listing = timeout(
+        TIMEOUT,
+        client.call_tool(CallToolRequestParams::new("adb_list_devices")),
+    )
+    .await??;
+    assert_ne!(listing.is_error, Some(true));
     disconnect(client, child).await
 }
 

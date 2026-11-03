@@ -81,6 +81,33 @@ timeouts, malformed output, and invalid UTF-8 produce MCP tool results with
 are captured, never forwarded directly to the MCP protocol stream. Device serial
 numbers and metadata are returned to the calling MCP client.
 
+#### adb_health_check
+
+Run the ADB binary, server, and visible-device checks. An optional serial enables
+device-specific connection, authorization, and read-only shell checks:
+
+```json
+{}
+```
+
+```json
+{"serial": "emulator-5554"}
+```
+
+The tool runs `adb version` and `adb devices -l`. The latter may start the local
+ADB daemon. Without a serial, device-specific checks are marked `skipped`; the
+visible device list is still included in the report. With a serial, the report
+checks its ADB state and, only when online, runs `adb -s <serial> shell id -u`.
+This verifies shell access and reports the observed `shell_uid` and
+`shell_is_root` values. It never runs `adb root` or changes device state.
+
+The JSON result contains an overall `status` (`healthy` or `unhealthy`),
+individual `checks` (`passed`, `failed`, or `skipped`), the visible `devices`,
+and nullable shell identity fields. Expected diagnostic failures are returned
+in the report rather than as MCP tool errors; skipped checks do not make the
+overall status unhealthy. Each ADB command has a five-second timeout. The tool
+exposes device serials and ADB metadata to the calling MCP client.
+
 #### adb_device_info
 
 Provide a device serial number as a required string argument:

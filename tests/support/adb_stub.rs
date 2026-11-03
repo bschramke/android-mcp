@@ -12,6 +12,26 @@ fn main() -> ExitCode {
         println!("Android Debug Bridge version 1.0.41");
         return ExitCode::SUCCESS;
     }
+    if args.len() == 5 && args[0] == "-s" && args[2..] == ["shell", "id", "-u"] {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected health-check serial argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("health_online") => println!("2000"),
+            Ok("health_root") => println!("0"),
+            Ok("health_shell_failure") => {
+                eprintln!("shell access denied");
+                return ExitCode::FAILURE;
+            }
+            Ok("health_shell_timeout") => loop {
+                thread::park();
+            },
+            Ok("health_invalid_uid") => println!("not-a-uid"),
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args.len() == 5 && args[0] == "-s" && args[2..4] == ["shell", "pidof"] {
         if args[1] != "emulator-5554" || args[4] != "com.github.bschramke.myfinance" {
             eprintln!("Unexpected pidof serial or package argument");
@@ -234,7 +254,14 @@ fn main() -> ExitCode {
 
     match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
         Ok("empty") => println!("List of devices attached\n"),
-        Ok("devices") => {
+        Ok(
+            "devices"
+            | "health_online"
+            | "health_root"
+            | "health_shell_failure"
+            | "health_shell_timeout"
+            | "health_invalid_uid",
+        ) => {
             eprintln!("* daemon started successfully");
             println!(
                 "List of devices attached\nemulator-5554 device product:sdk model:Pixel_8 device:emu transport_id:1\nphone unauthorized\nother offline\n"
