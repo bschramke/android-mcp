@@ -11,7 +11,6 @@ const SCREENSHOT_PNG: &[u8] = &[
     0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0,
     239, 191, 175, 219, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
-
 fn main() -> ExitCode {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["version"] {
@@ -55,6 +54,48 @@ fn main() -> ExitCode {
             },
             Ok("screenshot_large") => {
                 let _ = io::stdout().write_all(&vec![b'x'; 16 * 1024 * 1024 + 1]);
+                loop {
+                    thread::park();
+                }
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 4
+        && args[0] == "-s"
+        && args[2] == "shell"
+        && args[3].contains("uiautomator dump")
+    {
+        let hierarchy = match args[1].as_str() {
+            "emulator-5554" => {
+                include_str!("../fixtures/screen/emulator-5554-window_dump.xml")
+            }
+            "emulator-5556" => {
+                include_str!("../fixtures/screen/emulator-5556-window_dump.xml")
+            }
+            _ => {
+                eprintln!("Unexpected UI hierarchy serial argument");
+                return ExitCode::FAILURE;
+            }
+        };
+        let script = &args[3];
+        if !script.contains("cat") || !script.contains("trap 'rm -f") {
+            eprintln!("UI hierarchy script must read and clean up its temporary file");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("ui_elements") => print!("{hierarchy}"),
+            Ok("ui_elements_malformed") => print!("not xml"),
+            Ok("ui_elements_failure") => {
+                eprintln!("uiautomator unavailable");
+                return ExitCode::FAILURE;
+            }
+            Ok("ui_elements_timeout") => loop {
+                thread::park();
+            },
+            Ok("ui_elements_large") => {
+                let _ = io::stdout().write_all(&vec![b'x'; 1024 * 1024 + 1]);
                 loop {
                     thread::park();
                 }

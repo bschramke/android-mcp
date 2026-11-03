@@ -13,4 +13,6 @@ pub use executable::resolve_executable;
 pub use health::health_check;
 pub use logcat::logcat;
 pub use model::LogPriority;
-pub use screen::{display_info, save_screenshot, take_screenshot};
+pub use screen::{
+    display_info, get_screen_hierarchy, list_elements_on_screen, save_screenshot, take_screenshot,
+};

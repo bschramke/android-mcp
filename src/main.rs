@@ -16,6 +16,12 @@ struct DeviceInfoRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ScreenElementsRequest {
+    #[schemars(description = "ADB serial number identifying the device to inspect")]
+    serial: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ScreenshotRequest {
     #[schemars(description = "ADB serial number identifying the device to capture")]
     serial: String,
@@ -81,6 +87,38 @@ struct AndroidMcpServer {
 
 #[tool_router(server_handler)]
 impl AndroidMcpServer {
+    #[tool(description = "List UI elements with their coordinates and properties")]
+    async fn adb_list_elements_on_screen(
+        &self,
+        Parameters(request): Parameters<ScreenElementsRequest>,
+    ) -> CallToolResult {
+        match adb::list_elements_on_screen(&self.adb_executable, &request.serial).await {
+            Ok(elements) => match serde_json::to_string(&elements) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize screen elements: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Get the nested UI hierarchy for the current Android screen")]
+    async fn adb_get_screen_hierarchy(
+        &self,
+        Parameters(request): Parameters<ScreenElementsRequest>,
+    ) -> CallToolResult {
+        match adb::get_screen_hierarchy(&self.adb_executable, &request.serial).await {
+            Ok(hierarchy) => match serde_json::to_string(&hierarchy) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize screen hierarchy: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
     #[tool(description = "Take a screenshot to understand what's on screen")]
     async fn adb_take_screenshot(
         &self,

@@ -306,6 +306,39 @@ and byte size. The same five-second timeout and 16-MiB PNG limit apply. Saved
 screenshots persist at the specified path and may contain sensitive screen
 contents.
 
+#### adb_list_elements_on_screen
+
+Provide a device serial number as a required string argument:
+
+```json
+{"serial": "emulator-5554"}
+```
+
+The tool captures the Android UI Automator hierarchy and returns a JSON object
+with the serial and a flat preorder list of nodes. Each element includes any
+available `class`, `text`, `resource_id`, `content_desc`, `package`,
+`bounds` (`left`, `top`, `right`, `bottom`), and interaction flags such as
+`clickable`, `enabled`, `focused`, `scrollable`, `long_clickable`, `checkable`,
+`checked`, and `selected`. Missing attributes are omitted; unrecognized bounds
+remain `null`.
+
+The hierarchy is written to a unique temporary file on the device, read back,
+and removed by a shell cleanup trap. The tool does not leave a hierarchy file
+behind during normal completion. Capture has a ten-second timeout, and XML
+output is capped at 1 MiB. Malformed XML, ADB failures, timeouts, and output
+overflows produce tool errors. UI text and labels may contain sensitive content
+and are returned to the calling MCP client.
+
+#### adb_get_screen_hierarchy
+
+Provide a device serial number as a required string argument. This tool uses the
+same UI Automator capture as `adb_list_elements_on_screen`, but returns nodes as
+a nested tree: the response contains `serial` and `roots`; each node contains an
+`element` with the same properties as the flat-list tool and a `children` array
+for its direct child nodes. The UI Automator sibling `index` is intentionally
+omitted. The same temporary-file cleanup, ten-second timeout, 1-MiB XML limit,
+and sensitive-content considerations apply.
+
 ## Connect to an MCP client
 
 Build the executable from the android-mcp repository:
@@ -381,13 +414,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot \
+	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or
