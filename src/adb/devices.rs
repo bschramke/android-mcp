@@ -1,40 +1,25 @@
-use std::{io, path::Path, process::Stdio, time::Duration};
+use std::{io, path::Path, time::Duration};
 
-use tokio::{process::Command, time::timeout};
+use tokio::time::Instant;
 
-use super::model::{AndroidDevice, DeviceList, DeviceStatus};
+use super::{
+    command::{CommandOptions, ensure_success, run_adb},
+    model::{AndroidDevice, DeviceList, DeviceStatus},
+};
 
 pub async fn list_devices(executable: &Path) -> io::Result<DeviceList> {
-    let output = timeout(
-        Duration::from_secs(5),
-        Command::new(executable)
-            .args(["devices", "-l"])
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
+    let output = run_adb(
+        executable,
+        ["devices", "-l"],
+        "device listing",
+        CommandOptions::new(
+            Instant::now() + Duration::from_secs(5),
+            64 * 1024,
+            16 * 1024,
+        ),
     )
-    .await
-    .map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::TimedOut,
-            "ADB device listing timed out after 5 seconds",
-        )
-    })?
-    .map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Cannot execute ADB device listing: {error}"),
-        )
-    })?;
-
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "ADB device listing failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-
+    .await?;
+    ensure_success(&output, "device listing")?;
     let stdout = std::str::from_utf8(&output.stdout).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,

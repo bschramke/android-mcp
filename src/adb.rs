@@ -1,3 +1,4 @@
+mod command;
 mod device_info;
 mod devices;
 mod display_info;

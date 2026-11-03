@@ -1,10 +1,8 @@
-use std::{io, path::Path, process::Stdio, time::Duration};
+use std::{io, path::Path};
 
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    process::Command,
-    time::{Instant, timeout, timeout_at},
-};
+use tokio::time::Instant;
+
+use crate::adb::command::{CommandOptions, ensure_success, run_shell};
 
 pub(super) fn validate(package: &str) -> io::Result<()> {
     let valid = package.len() <= 255
@@ -33,78 +31,23 @@ pub(super) async fn resolve_pid(
     package: &str,
     deadline: Instant,
 ) -> io::Result<u32> {
-    let mut child = Command::new(executable)
-        .args(["-s", serial, "shell", "pidof", package])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("Cannot execute ADB package PID lookup: {error}"),
-            )
-        })?;
-    let result = timeout_at(deadline, async {
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("Missing pidof stdout"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| io::Error::other("Missing pidof stderr"))?;
-        let (output, diagnostic) = tokio::try_join!(
-            read_limited(
-                stdout,
-                4096,
-                "ADB package PID stdout exceeded the 4 KiB limit"
-            ),
-            read_limited(
-                stderr,
-                16 * 1024,
-                "ADB package PID stderr exceeded the 16 KiB limit"
-            ),
-        )?;
-        let status = child.wait().await?;
-        if !status.success()
-            && !(status.code() == Some(1) && output.is_empty() && diagnostic.is_empty())
-        {
-            return Err(io::Error::other(format!(
-                "ADB package PID lookup failed ({status}): {}",
-                String::from_utf8_lossy(&diagnostic).trim()
-            )));
-        }
-        parse_pid(&output, package)
-    })
-    .await
-    .unwrap_or_else(|_| {
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "ADB logcat timed out after 5 seconds during package PID lookup",
-        ))
-    });
-    if result.is_err() {
-        let _ = timeout(Duration::from_secs(1), child.kill()).await;
+    let output = run_shell(
+        executable,
+        serial,
+        ["pidof", package],
+        "package PID lookup",
+        CommandOptions::new(deadline, 4 * 1024, 16 * 1024)
+            .with_timeout_message("ADB logcat timed out after 5 seconds during package PID lookup"),
+    )
+    .await?;
+    if !output.status.success()
+        && !(output.status.code() == Some(1)
+            && output.stdout.is_empty()
+            && output.stderr.is_empty())
+    {
+        ensure_success(&output, "package PID lookup")?;
     }
-    result
-}
-
-async fn read_limited(
-    reader: impl AsyncRead + Unpin,
-    limit: usize,
-    message: &'static str,
-) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader
-        .take((limit + 1) as u64)
-        .read_to_end(&mut bytes)
-        .await?;
-    if bytes.len() > limit {
-        return Err(io::Error::other(message));
-    }
-    Ok(bytes)
+    parse_pid(&output.stdout, package)
 }
 
 fn parse_pid(output: &[u8], package: &str) -> io::Result<u32> {

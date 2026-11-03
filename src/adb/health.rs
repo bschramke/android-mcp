@@ -1,9 +1,14 @@
-use std::{io, path::Path, process::Stdio, time::Duration};
+use std::{io, path::Path, time::Duration};
 
 use serde::Serialize;
-use tokio::{process::Command, time::timeout};
+use tokio::time::Instant;
 
-use super::{devices::list_devices, executable::adb_version, model::DeviceStatus};
+use super::{
+    command::{CommandOptions, ensure_success, run_shell},
+    devices::list_devices,
+    executable::adb_version,
+    model::DeviceStatus,
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -228,35 +233,15 @@ async fn check_device(
 }
 
 async fn shell_uid_for(executable: &Path, serial: &str) -> io::Result<u32> {
-    let output = timeout(
-        Duration::from_secs(5),
-        Command::new(executable)
-            .args(["-s", serial, "shell", "id", "-u"])
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
+    let output = run_shell(
+        executable,
+        serial,
+        ["id", "-u"],
+        "shell access check",
+        CommandOptions::new(Instant::now() + Duration::from_secs(5), 4 * 1024, 16 * 1024),
     )
-    .await
-    .map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::TimedOut,
-            "ADB shell access check timed out after 5 seconds",
-        )
-    })?
-    .map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Cannot execute ADB shell access check: {error}"),
-        )
-    })?;
-
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "ADB shell access check failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
+    .await?;
+    ensure_success(&output, "shell access check")?;
 
     std::str::from_utf8(&output.stdout)
         .map_err(|error| {

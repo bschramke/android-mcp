@@ -206,6 +206,9 @@ fn main() -> ExitCode {
                     thread::park();
                 }
             }
+            "logcat_large_exit" => {
+                let _ = io::stdout().write_all(&vec![b'x'; 256 * 1024 + 4096]);
+            }
             "logcat_stderr_large" => {
                 let _ = io::stderr().write_all(&vec![b'e'; 16 * 1024 + 4096]);
                 loop {

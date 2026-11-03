@@ -1,12 +1,9 @@
-use std::{io, path::Path, process::Stdio, time::Duration};
+use std::{ffi::OsStr, io, path::Path, time::Duration};
 
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    process::{Child, Command},
-    time::{Instant, timeout, timeout_at},
-};
+use tokio::time::Instant;
 
 use super::{
+    command::{CommandOptions, ensure_success, run_shell},
     device_info::validate_serial,
     model::{DisplayInfo, DisplayOrientation, ScreenDimensions},
 };
@@ -24,19 +21,19 @@ pub(super) async fn display_info_until(
     serial: &str,
     deadline: Instant,
 ) -> io::Result<DisplayInfo> {
-    let size = run_shell(executable, serial, &["wm", "size"], "wm size", deadline).await?;
-    let density = run_shell(
+    let size = run_display_query(executable, serial, ["wm", "size"], "wm size", deadline).await?;
+    let density = run_display_query(
         executable,
         serial,
-        &["wm", "density"],
+        ["wm", "density"],
         "wm density",
         deadline,
     )
     .await?;
-    let window = run_shell(
+    let window = run_display_query(
         executable,
         serial,
-        &["dumpsys", "window", "displays"],
+        ["dumpsys", "window", "displays"],
         "dumpsys window displays",
         deadline,
     )
@@ -45,100 +42,33 @@ pub(super) async fn display_info_until(
     Ok(parse_display_info(&size, &density, &window))
 }
 
-async fn run_shell(
+async fn run_display_query<I, S>(
     executable: &Path,
     serial: &str,
-    arguments: &[&str],
+    arguments: I,
     description: &str,
     deadline: Instant,
-) -> io::Result<String> {
-    let mut child = Command::new(executable)
-        .args(["-s", serial, "shell"])
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("Cannot execute ADB {description}: {error}"),
-            )
-        })?;
-
-    let result = match timeout_at(deadline, capture(&mut child, description)).await {
-        Ok(result) => result,
-        Err(_) => Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("ADB {description} timed out after 5 seconds"),
-        )),
-    };
-    if result.is_err() {
-        let _ = timeout(Duration::from_secs(1), child.kill()).await;
-    }
-    result
-}
-
-async fn capture(child: &mut Child, description: &str) -> io::Result<String> {
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("Missing ADB display stdout"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| io::Error::other("Missing ADB display stderr"))?;
-    let stdout_read = read_capped(stdout, DISPLAY_OUTPUT_LIMIT);
-    let stderr_read = read_capped(stderr, DISPLAY_STDERR_LIMIT);
-    tokio::pin!(stdout_read, stderr_read);
-    let mut output = None;
-    let mut diagnostic = None;
-
-    while output.is_none() || diagnostic.is_none() {
-        tokio::select! {
-            result = &mut stdout_read, if output.is_none() => {
-                let (bytes, exceeded) = result?;
-                if exceeded {
-                    return Err(io::Error::other(format!("ADB {description} output exceeded the 128 KiB limit")));
-                }
-                output = Some(bytes);
-            }
-            result = &mut stderr_read, if diagnostic.is_none() => {
-                let (bytes, exceeded) = result?;
-                if exceeded {
-                    return Err(io::Error::other(format!("ADB {description} stderr exceeded the 16 KiB limit")));
-                }
-                diagnostic = Some(bytes);
-            }
-        }
-    }
-
-    let status = child.wait().await?;
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "ADB {description} failed ({status}): {}",
-            String::from_utf8_lossy(&diagnostic.unwrap_or_default()).trim()
-        )));
-    }
-
-    String::from_utf8(output.unwrap_or_default()).map_err(|error| {
+) -> io::Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = run_shell(
+        executable,
+        serial,
+        arguments,
+        description,
+        CommandOptions::new(deadline, DISPLAY_OUTPUT_LIMIT, DISPLAY_STDERR_LIMIT)
+            .with_stdout_label("output"),
+    )
+    .await?;
+    ensure_success(&output, description)?;
+    String::from_utf8(output.stdout).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("ADB {description} output is not valid UTF-8: {error}"),
         )
     })
-}
-
-async fn read_capped(reader: impl AsyncRead + Unpin, limit: usize) -> io::Result<(Vec<u8>, bool)> {
-    let mut bytes = Vec::new();
-    reader
-        .take((limit + 1) as u64)
-        .read_to_end(&mut bytes)
-        .await?;
-    let exceeded = bytes.len() > limit;
-    bytes.truncate(limit);
-    Ok((bytes, exceeded))
 }
 
 fn parse_display_info(size: &str, density: &str, window: &str) -> DisplayInfo {

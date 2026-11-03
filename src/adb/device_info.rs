@@ -1,11 +1,9 @@
-use std::{collections::BTreeMap, io, path::Path, process::Stdio, time::Duration};
+use std::{collections::BTreeMap, io, path::Path, time::Duration};
 
-use tokio::{
-    process::Command,
-    time::{Instant, timeout_at},
-};
+use tokio::time::Instant;
 
 use super::{
+    command::{CommandOptions, ensure_success, run_shell},
     display_info::display_info_until,
     model::{AndroidInfo, BuildInfo, CpuInfo, DeviceInfo, HardwareInfo, ProductInfo},
 };
@@ -14,35 +12,15 @@ pub async fn device_info(executable: &Path, serial: &str) -> io::Result<DeviceIn
     validate_serial(serial)?;
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let output = timeout_at(
-        deadline,
-        Command::new(executable)
-            .args(["-s", serial, "shell", "getprop"])
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
+    let output = run_shell(
+        executable,
+        serial,
+        ["getprop"],
+        "device info",
+        CommandOptions::new(deadline, 256 * 1024, 16 * 1024),
     )
-    .await
-    .map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::TimedOut,
-            "ADB device info timed out after 5 seconds",
-        )
-    })?
-    .map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Cannot execute ADB device info: {error}"),
-        )
-    })?;
-
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "ADB device info failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
+    .await?;
+    ensure_success(&output, "device info")?;
     let stdout = std::str::from_utf8(&output.stdout).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,

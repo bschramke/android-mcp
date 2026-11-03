@@ -1023,6 +1023,28 @@ async fn oversized_logcat_is_capped_and_server_remains_usable() -> TestResult {
     disconnect(client, child).await
 }
 
+#[tokio::test]
+async fn oversized_logcat_from_an_exited_process_is_still_truncated_successfully() -> TestResult {
+    let (client, child) = connect("logcat_large_exit").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(
+            serde_json::json!({"serial": "emulator-5554"}),
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected snapshot JSON")?
+            .text,
+    )?;
+    assert_eq!(snapshot["truncated"], true);
+    assert_eq!(snapshot["output"].as_str().unwrap().len(), 256 * 1024);
+    disconnect(client, child).await
+}
+
 async fn assert_logcat_error(mode: &str, message: &str) -> TestResult {
     let (client, child) = connect(mode).await?;
     let result = timeout(
