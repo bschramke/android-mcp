@@ -16,6 +16,23 @@ struct DeviceInfoRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ScreenshotRequest {
+    #[schemars(description = "ADB serial number identifying the device to capture")]
+    serial: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct SaveScreenshotRequest {
+    #[schemars(description = "ADB serial number identifying the device to capture")]
+    serial: String,
+    #[schemars(description = "Absolute destination path ending in .png")]
+    path: String,
+    #[serde(default)]
+    #[schemars(description = "Replace an existing file; defaults to false")]
+    overwrite: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct HealthCheckRequest {
     #[schemars(description = "Optional ADB serial number for device-specific checks")]
     serial: Option<String>,
@@ -64,6 +81,38 @@ struct AndroidMcpServer {
 
 #[tool_router(server_handler)]
 impl AndroidMcpServer {
+    #[tool(description = "Take a screenshot to understand what's on screen")]
+    async fn adb_take_screenshot(
+        &self,
+        Parameters(request): Parameters<ScreenshotRequest>,
+    ) -> CallToolResult {
+        match adb::take_screenshot(&self.adb_executable, &request.serial).await {
+            Ok(image) => CallToolResult::success(vec![ContentBlock::image(image, "image/png")]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Save a screenshot to a file")]
+    async fn adb_save_screenshot(
+        &self,
+        Parameters(request): Parameters<SaveScreenshotRequest>,
+    ) -> CallToolResult {
+        match adb::save_screenshot(
+            &self.adb_executable,
+            &request.serial,
+            std::path::Path::new(&request.path),
+            request.overwrite,
+        )
+        .await
+        {
+            Ok(size) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Saved screenshot to {} ({size} bytes)",
+                request.path
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
     #[tool(
         description = "Diagnose the ADB executable, server, visible devices, authorization, and read-only shell access; adb devices may start the local ADB server"
     )]

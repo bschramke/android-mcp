@@ -2,7 +2,7 @@ use std::{ffi::OsStr, io, path::Path, time::Duration};
 
 use tokio::time::Instant;
 
-use super::{
+use super::super::{
     command::{CommandOptions, ensure_success, run_shell},
     device_info::validate_serial,
     model::{DisplayInfo, DisplayOrientation, ScreenDimensions},
@@ -16,7 +16,7 @@ pub async fn display_info(executable: &Path, serial: &str) -> io::Result<Display
     display_info_until(executable, serial, Instant::now() + Duration::from_secs(5)).await
 }
 
-pub(super) async fn display_info_until(
+pub(in crate::adb) async fn display_info_until(
     executable: &Path,
     serial: &str,
     deadline: Instant,

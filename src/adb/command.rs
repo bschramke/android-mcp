@@ -236,7 +236,10 @@ pub(super) async fn read_capped(
 }
 
 fn format_limit(limit: usize) -> String {
-    if limit.is_multiple_of(1024) {
+    const MIB: usize = 1024 * 1024;
+    if limit.is_multiple_of(MIB) {
+        format!("{} MiB", limit / MIB)
+    } else if limit.is_multiple_of(1024) {
         format!("{} KiB", limit / 1024)
     } else {
         format!("{limit} byte")

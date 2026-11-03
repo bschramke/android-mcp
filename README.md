@@ -267,6 +267,45 @@ the calling client without automatic redaction and may be sent to its configured
 model provider. The server does not additionally log or persist the captured
 output. Review the requested device and tool approval before retrieving logs.
 
+#### adb_take_screenshot
+
+Provide a device serial number as a required string argument:
+
+```json
+{"serial": "emulator-5554"}
+```
+
+The tool runs `adb -s <serial> exec-out screencap -p` and returns the PNG as an
+`image/png` MCP image content block. It uses a five-second timeout and rejects
+invalid PNG output or captures larger than 16 MiB. Screenshots are returned to
+the calling client and are not persisted by this tool. Screen contents may be
+sensitive.
+
+#### adb_save_screenshot
+
+Provide a serial and an absolute `.png` destination path:
+
+```json
+{"serial": "emulator-5554", "path": "/absolute/path/to/screenshot.png"}
+```
+
+The optional `overwrite` parameter defaults to `false`:
+
+```json
+{
+	"serial": "emulator-5554",
+	"path": "/absolute/path/to/screenshot.png",
+	"overwrite": true
+}
+```
+
+Without `overwrite: true`, an existing file is left untouched and the tool
+returns an error. With it, the existing file is replaced. The tool captures and
+validates the PNG before opening the destination, then returns the saved path
+and byte size. The same five-second timeout and 16-MiB PNG limit apply. Saved
+screenshots persist at the specified path and may contain sensitive screen
+contents.
+
 ## Connect to an MCP client
 
 Build the executable from the android-mcp repository:
@@ -342,13 +381,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat \
+	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or

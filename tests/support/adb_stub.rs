@@ -6,6 +6,12 @@ use std::{
     thread,
 };
 
+const SCREENSHOT_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0,
+    0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0,
+    239, 191, 175, 219, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 fn main() -> ExitCode {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["version"] {
@@ -28,6 +34,31 @@ fn main() -> ExitCode {
                 thread::park();
             },
             Ok("health_invalid_uid") => println!("not-a-uid"),
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 5 && args[0] == "-s" && args[2..] == ["exec-out", "screencap", "-p"] {
+        if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
+            eprintln!("Unexpected screenshot serial argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("screenshot") => io::stdout().write_all(SCREENSHOT_PNG).unwrap(),
+            Ok("screenshot_invalid") => io::stdout().write_all(b"not a PNG").unwrap(),
+            Ok("screenshot_failure") => {
+                eprintln!("device offline");
+                return ExitCode::FAILURE;
+            }
+            Ok("screenshot_timeout") => loop {
+                thread::park();
+            },
+            Ok("screenshot_large") => {
+                let _ = io::stdout().write_all(&vec![b'x'; 16 * 1024 * 1024 + 1]);
+                loop {
+                    thread::park();
+                }
+            }
             _ => return ExitCode::FAILURE,
         }
         return ExitCode::SUCCESS;

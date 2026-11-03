@@ -4,8 +4,8 @@ use tokio::time::Instant;
 
 use super::{
     command::{CommandOptions, ensure_success, run_shell},
-    display_info::display_info_until,
     model::{AndroidInfo, BuildInfo, CpuInfo, DeviceInfo, HardwareInfo, ProductInfo},
+    screen::display_info_until,
 };
 
 pub async fn device_info(executable: &Path, serial: &str) -> io::Result<DeviceInfo> {
