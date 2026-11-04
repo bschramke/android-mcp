@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+pub mod adb;
+
 use std::{error::Error, process::Stdio, time::Duration};
 
 use rmcp::{RoleClient, ServiceExt, service::RunningService};
