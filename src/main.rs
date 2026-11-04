@@ -39,6 +39,23 @@ struct SaveScreenshotRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct StartScreenRecordingRequest {
+    #[schemars(description = "ADB serial number identifying the device to record")]
+    serial: String,
+    #[schemars(description = "Absolute destination path ending in .mp4")]
+    path: String,
+    #[serde(default)]
+    #[schemars(description = "Replace an existing file after recording; defaults to false")]
+    overwrite: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct StopScreenRecordingRequest {
+    #[schemars(description = "ADB serial number identifying the active recording")]
+    serial: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct HealthCheckRequest {
     #[schemars(description = "Optional ADB serial number for device-specific checks")]
     serial: Option<String>,
@@ -83,10 +100,53 @@ fn default_logcat_lines() -> u32 {
 #[derive(Clone)]
 struct AndroidMcpServer {
     adb_executable: PathBuf,
+    screen_recordings: adb::ScreenRecordingManager,
 }
 
 #[tool_router(server_handler)]
 impl AndroidMcpServer {
+    #[tool(description = "Start recording the device screen to a video file")]
+    async fn adb_start_screen_recording(
+        &self,
+        Parameters(request): Parameters<StartScreenRecordingRequest>,
+    ) -> CallToolResult {
+        match self
+            .screen_recordings
+            .start(
+                &self.adb_executable,
+                &request.serial,
+                std::path::Path::new(&request.path),
+                request.overwrite,
+            )
+            .await
+        {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Started screen recording for {} to {} (maximum 180 seconds)",
+                request.serial, request.path
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Stop the active screen recording and save the video")]
+    async fn adb_stop_screen_recording(
+        &self,
+        Parameters(request): Parameters<StopScreenRecordingRequest>,
+    ) -> CallToolResult {
+        match self
+            .screen_recordings
+            .stop(&self.adb_executable, &request.serial)
+            .await
+        {
+            Ok(result) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Saved screen recording to {} ({} bytes)",
+                result.path.display(),
+                result.size_bytes
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
     #[tool(description = "List UI elements with their coordinates and properties")]
     async fn adb_list_elements_on_screen(
         &self,
@@ -255,7 +315,30 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let adb_executable = adb::resolve_executable().await?;
-    let service = AndroidMcpServer { adb_executable }.serve(stdio()).await?;
-    service.waiting().await?;
+    let screen_recordings = adb::ScreenRecordingManager::default();
+    let service = AndroidMcpServer {
+        adb_executable: adb_executable.clone(),
+        screen_recordings: screen_recordings.clone(),
+    }
+    .serve(stdio())
+    .await?;
+    let cancellation = service.cancellation_token();
+    let waiting = service.waiting();
+    tokio::pin!(waiting);
+    let service_result = tokio::select! {
+        result = &mut waiting => result,
+        signal = tokio::signal::ctrl_c() => {
+            if let Err(error) = signal {
+                eprintln!("Cannot listen for Ctrl-C during shutdown: {error}");
+            }
+            cancellation.cancel();
+            waiting.await
+        }
+    };
+
+    for (serial, error) in screen_recordings.stop_all(&adb_executable).await {
+        eprintln!("Cannot stop screen recording for {serial} during shutdown: {error}");
+    }
+    service_result?;
     Ok(())
 }

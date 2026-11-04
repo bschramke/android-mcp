@@ -43,6 +43,18 @@ async fn connect(mode: &str) -> TestResult<(Client, Child)> {
     connect_command(command).await
 }
 
+async fn connect_recording() -> TestResult<(Client, Child, tempfile::TempDir)> {
+    let trace_directory = tempfile::tempdir()?;
+    let trace_path = trace_directory.path().join("recording.trace");
+    let mut command = server_command();
+    command
+        .env("ANDROID_MCP_ADB", adb_fixture()?)
+        .env("ANDROID_MCP_TEST_ADB_MODE", "recording")
+        .env("ANDROID_MCP_TEST_RECORDING_TRACE", trace_path);
+    let (client, child) = connect_command(command).await?;
+    Ok((client, child, trace_directory))
+}
+
 #[tokio::test]
 async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     let (client, child) = connect("empty").await?;
@@ -55,7 +67,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 9);
+    assert_eq!(tools.len(), 11);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -230,6 +242,43 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
         Some(&serde_json::json!(["serial"]))
     );
 
+    let start_recording_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_start_screen_recording")
+        .ok_or("Missing start-recording tool")?;
+    assert_eq!(
+        start_recording_tool.description.as_deref(),
+        Some("Start recording the device screen to a video file")
+    );
+    assert_eq!(
+        start_recording_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "path"]))
+    );
+    assert_eq!(
+        start_recording_tool.input_schema["properties"]["overwrite"]["type"],
+        "boolean"
+    );
+    assert!(
+        start_recording_tool.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|required| required != "overwrite")
+    );
+
+    let stop_recording_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_stop_screen_recording")
+        .ok_or("Missing stop-recording tool")?;
+    assert_eq!(
+        stop_recording_tool.description.as_deref(),
+        Some("Stop the active screen recording and save the video")
+    );
+    assert_eq!(
+        stop_recording_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
+    );
+
     disconnect(client, child).await
 }
 
@@ -247,6 +296,29 @@ fn screen_elements_request(serial: &str) -> CallToolRequestParams {
 
 fn screen_hierarchy_request(serial: &str) -> CallToolRequestParams {
     let mut request = CallToolRequestParams::new("adb_get_screen_hierarchy");
+    request.arguments = serde_json::json!({"serial": serial}).as_object().cloned();
+    request
+}
+
+fn start_screen_recording_request(
+    serial: &str,
+    path: &std::path::Path,
+    overwrite: Option<bool>,
+) -> CallToolRequestParams {
+    let mut arguments = serde_json::json!({
+        "serial": serial,
+        "path": path.to_string_lossy()
+    });
+    if let Some(overwrite) = overwrite {
+        arguments["overwrite"] = serde_json::json!(overwrite);
+    }
+    let mut request = CallToolRequestParams::new("adb_start_screen_recording");
+    request.arguments = arguments.as_object().cloned();
+    request
+}
+
+fn stop_screen_recording_request(serial: &str) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_stop_screen_recording");
     request.arguments = serde_json::json!({"serial": serial}).as_object().cloned();
     request
 }
@@ -430,6 +502,135 @@ async fn list_elements_on_screen_parses_both_device_fixtures() -> TestResult {
         }));
     }
     disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn screen_recording_start_stop_downloads_and_cleans_up() -> TestResult {
+    let (client, child, trace_directory) = connect_recording().await?;
+    let output_directory = tempfile::tempdir()?;
+    let output_path = output_directory.path().join("capture.mp4");
+
+    let started = timeout(
+        TIMEOUT,
+        client.call_tool(start_screen_recording_request(
+            "emulator-5554",
+            &output_path,
+            None,
+        )),
+    )
+    .await??;
+    assert_ne!(started.is_error, Some(true));
+
+    let duplicate = timeout(
+        TIMEOUT,
+        client.call_tool(start_screen_recording_request(
+            "emulator-5554",
+            &output_path,
+            None,
+        )),
+    )
+    .await??;
+    assert_eq!(duplicate.is_error, Some(true));
+    assert!(
+        duplicate.content[0]
+            .as_text()
+            .ok_or("Expected duplicate-start error")?
+            .text
+            .contains("already active")
+    );
+
+    let stopped = timeout(
+        TIMEOUT,
+        client.call_tool(stop_screen_recording_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(stopped.is_error, Some(true));
+    assert_eq!(
+        std::fs::read(&output_path)?,
+        b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
+    );
+    let trace = std::fs::read_to_string(trace_directory.path().join("recording.trace"))?;
+    let events: Vec<_> = trace.lines().collect();
+    assert_eq!(events.len(), 4);
+    assert!(events[0].starts_with("start /sdcard/.android-mcp-recording-"));
+    assert_eq!(&events[1..], ["stopped", "pulled", "cleaned"]);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn screen_recording_preserves_existing_file_without_overwrite() -> TestResult {
+    let (client, child, _) = connect_recording().await?;
+    let output_directory = tempfile::tempdir()?;
+    let output_path = output_directory.path().join("existing.mp4");
+    std::fs::write(&output_path, b"keep this file")?;
+
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(start_screen_recording_request(
+            "emulator-5554",
+            &output_path,
+            None,
+        )),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(std::fs::read(&output_path)?, b"keep this file");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn screen_recording_replaces_existing_file_when_overwrite_is_true() -> TestResult {
+    let (client, child, _trace_directory) = connect_recording().await?;
+    let output_directory = tempfile::tempdir()?;
+    let output_path = output_directory.path().join("existing.mp4");
+    std::fs::write(&output_path, b"replace this file")?;
+
+    let started = timeout(
+        TIMEOUT,
+        client.call_tool(start_screen_recording_request(
+            "emulator-5554",
+            &output_path,
+            Some(true),
+        )),
+    )
+    .await??;
+    assert_ne!(started.is_error, Some(true));
+    let stopped = timeout(
+        TIMEOUT,
+        client.call_tool(stop_screen_recording_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(stopped.is_error, Some(true));
+    assert_eq!(
+        std::fs::read(&output_path)?,
+        b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn screen_recording_stops_and_saves_when_server_closes() -> TestResult {
+    let (client, child, _trace_directory) = connect_recording().await?;
+    let output_directory = tempfile::tempdir()?;
+    let output_path = output_directory.path().join("shutdown.mp4");
+
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(start_screen_recording_request(
+            "emulator-5554",
+            &output_path,
+            None,
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+
+    disconnect(client, child).await?;
+    assert_eq!(
+        std::fs::read(&output_path)?,
+        b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
+    );
+    Ok(())
 }
 
 #[tokio::test]

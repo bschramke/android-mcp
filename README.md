@@ -339,6 +339,39 @@ for its direct child nodes. The UI Automator sibling `index` is intentionally
 omitted. The same temporary-file cleanup, ten-second timeout, 1-MiB XML limit,
 and sensitive-content considerations apply.
 
+#### adb_start_screen_recording
+
+Start a recording for a device and choose its eventual absolute `.mp4` path:
+
+```json
+{"serial": "emulator-5554", "path": "/absolute/path/to/recording.mp4"}
+```
+
+The optional `overwrite` parameter defaults to `false`; an existing destination
+is rejected unless `overwrite: true` is specified. The server allows one active
+recording per serial. Android's `screenrecord` runs with its 180-second maximum.
+The recording is held as a PTY session in the MCP server and uses a unique
+temporary `.mp4` path on the device.
+
+#### adb_stop_screen_recording
+
+Stop and save the active recording for a serial:
+
+```json
+{"serial": "emulator-5554"}
+```
+
+The tool sends Ctrl-C to `screenrecord`, waits for the MP4 to finalize, downloads
+it to a staging path, validates its MP4 header, then installs it at the path
+provided to `adb_start_screen_recording`. Temporary local and remote files are
+cleaned up after successful completion. On normal MCP transport closure or
+Ctrl-C, the server also attempts to stop and save every active recording. A hard
+process kill or host failure cannot guarantee finalization; Android's
+180-second recording limit bounds the device-side process lifetime.
+
+Recordings persist at the selected local path and may contain sensitive screen
+content. Review the destination and tool approval before starting a recording.
+
 ## Connect to an MCP client
 
 Build the executable from the android-mcp repository:
@@ -414,13 +447,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy \
+	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or

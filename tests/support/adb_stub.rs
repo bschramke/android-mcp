@@ -1,7 +1,7 @@
 use std::{
     env,
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     process::ExitCode,
     thread,
 };
@@ -11,10 +11,83 @@ const SCREENSHOT_PNG: &[u8] = &[
     0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0,
     239, 191, 175, 219, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
+const SCREEN_RECORDING_MP4: &[u8] = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2";
 fn main() -> ExitCode {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["version"] {
         println!("Android Debug Bridge version 1.0.41");
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 8
+        && args[0] == "-s"
+        && args[2..5] == ["shell", "-tt", "screenrecord"]
+        && args[5..7] == ["--time-limit", "180"]
+    {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected screen-recording serial argument");
+            return ExitCode::FAILURE;
+        }
+        if !args[7].starts_with("/sdcard/.android-mcp-recording-") || !args[7].ends_with(".mp4") {
+            eprintln!("Unexpected remote screen-recording path");
+            return ExitCode::FAILURE;
+        }
+        let trace = env::var_os("ANDROID_MCP_TEST_RECORDING_TRACE").unwrap();
+        writeln!(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&trace)
+                .unwrap(),
+            "start {}",
+            args[7]
+        )
+        .unwrap();
+        println!("screenrecord started");
+        eprintln!("screenrecord diagnostic");
+        let mut byte = [0];
+        loop {
+            match io::stdin().read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) if byte[0] == 3 => break,
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("Cannot read screen-recording control input: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        writeln!(
+            OpenOptions::new().append(true).open(&trace).unwrap(),
+            "stopped"
+        )
+        .unwrap();
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 5 && args[0] == "-s" && args[2] == "pull" {
+        if args[1] != "emulator-5554" || !args[3].starts_with("/sdcard/.android-mcp-recording-") {
+            eprintln!("Unexpected screen-recording pull arguments");
+            return ExitCode::FAILURE;
+        }
+        std::fs::write(&args[4], SCREEN_RECORDING_MP4).unwrap();
+        let trace = env::var_os("ANDROID_MCP_TEST_RECORDING_TRACE").unwrap();
+        writeln!(
+            OpenOptions::new().append(true).open(&trace).unwrap(),
+            "pulled"
+        )
+        .unwrap();
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 6 && args[0] == "-s" && args[2..5] == ["shell", "rm", "-f"] {
+        if args[1] != "emulator-5554" || !args[5].starts_with("/sdcard/.android-mcp-recording-") {
+            eprintln!("Unexpected screen-recording cleanup arguments");
+            return ExitCode::FAILURE;
+        }
+        let trace = env::var_os("ANDROID_MCP_TEST_RECORDING_TRACE").unwrap();
+        writeln!(
+            OpenOptions::new().append(true).open(&trace).unwrap(),
+            "cleaned"
+        )
+        .unwrap();
         return ExitCode::SUCCESS;
     }
     if args.len() == 5 && args[0] == "-s" && args[2..] == ["shell", "id", "-u"] {
