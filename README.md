@@ -62,6 +62,8 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_list_apps`** - List all installed apps on the device
 - **`adb_app_info`** - Get version, install, and update details for one app
 - **`adb_get_foreground_app`** - Get the app currently in the foreground
+- **`adb_install_app`** - Install an APK on a selected device
+- **`adb_uninstall_app`** - Uninstall an app by package name
 
 ### Logs
 - **`adb_logcat`** - Read a bounded snapshot of recent device logs with optional filters
@@ -141,6 +143,34 @@ and APK code path. Timestamps are returned as reported by Android; their format
 may vary by Android version. Missing fields are `null`. The raw package dump is
 not returned. ADB failures, missing packages, malformed output, invalid UTF-8,
 and the five-second timeout produce tool errors.
+
+### adb_install_app
+
+Provide a device serial and an absolute APK path on the MCP server host:
+
+```json
+{"serial": "emulator-5554", "apk_path": "/absolute/path/to/app.apk"}
+```
+
+The optional `replace` and `downgrade` booleans default to `false`. `replace: true`
+passes `-r` to ADB and preserves app data. `downgrade: true` implies replacement
+and passes both `-r` and `-d`; Android may reject downgrades that it does not
+allow. Without replacement, installing an already-installed package returns an
+ADB error. The APK must exist on the MCP server host, use the `.apk` extension,
+and be accessible to the server process. Installation changes device state.
+
+### adb_uninstall_app
+
+Provide a device serial and Android application ID (also commonly called a
+package name or bundle ID):
+
+```json
+{"serial": "emulator-5554", "package": "com.example.app"}
+```
+
+The tool runs `adb -s <serial> uninstall <package>`. It validates the package
+name and returns an error if ADB cannot uninstall it, including when it is not
+installed or the device rejects removal. Uninstallation changes device state.
 
 ### adb_get_foreground_app
 
@@ -523,13 +553,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
+	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or

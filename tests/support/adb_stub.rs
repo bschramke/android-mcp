@@ -537,6 +537,50 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() >= 4 && args[0] == "-s" && args[2] == "install" {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected install serial argument");
+            return ExitCode::FAILURE;
+        }
+        let apk_path = args.last().unwrap();
+        if !apk_path.ends_with(".apk")
+            || std::path::Path::new(apk_path).file_name().and_then(|name| name.to_str())
+                != Some("sample app.apk")
+        {
+            eprintln!("Unexpected install APK path");
+            return ExitCode::FAILURE;
+        }
+        let install_options = &args[3..args.len() - 1];
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("install") if install_options.is_empty() => println!("Success"),
+            Ok("install_replace") if install_options == ["-r"] => println!("Success"),
+            Ok("install_downgrade") if install_options == ["-r", "-d"] => println!("Success"),
+            Ok("install_failure") => {
+                eprintln!("INSTALL_FAILED_INVALID_APK");
+                return ExitCode::FAILURE;
+            }
+            _ => {
+                eprintln!("Unexpected install options");
+                return ExitCode::FAILURE;
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 4 && args[0] == "-s" && args[2] == "uninstall" {
+        if args[1] != "emulator-5554" || args[3] != "com.example.app" {
+            eprintln!("Unexpected uninstall serial or package argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("uninstall") => println!("Success"),
+            Ok("uninstall_failure") => {
+                eprintln!("DELETE_FAILED_INTERNAL_ERROR");
+                return ExitCode::FAILURE;
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args != ["devices", "-l"] {
         eprintln!("Expected exactly: devices -l");
         return ExitCode::FAILURE;

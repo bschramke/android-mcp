@@ -19,7 +19,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 16);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -98,6 +98,40 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     assert_eq!(
         foreground_tool.input_schema["properties"]["serial"]["type"],
         "string"
+    );
+
+    let install_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_install_app")
+        .ok_or("Missing app-install tool")?;
+    assert_eq!(
+        install_tool.description.as_deref(),
+        Some("Install an app from file (.apk)")
+    );
+    assert_eq!(
+        install_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "apk_path"]))
+    );
+    assert_eq!(
+        install_tool.input_schema["properties"]["replace"]["type"],
+        "boolean"
+    );
+    assert_eq!(
+        install_tool.input_schema["properties"]["downgrade"]["type"],
+        "boolean"
+    );
+
+    let uninstall_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_uninstall_app")
+        .ok_or("Missing app-uninstall tool")?;
+    assert_eq!(
+        uninstall_tool.description.as_deref(),
+        Some("Uninstall an app by its package name or bundle ID")
+    );
+    assert_eq!(
+        uninstall_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "package"]))
     );
     assert_eq!(
         apps_tool.input_schema["properties"]["serial"]["type"],

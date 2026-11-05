@@ -10,7 +10,7 @@ mod logcat;
 mod model;
 mod screen;
 pub use app_info::app_info;
-pub use apps::list_apps;
+pub use apps::{install_app, list_apps, uninstall_app};
 pub use device_info::device_info;
 pub use devices::list_devices;
 pub use executable::resolve_executable;

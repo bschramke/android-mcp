@@ -33,6 +33,30 @@ struct AppInfoRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct InstallAppRequest {
+    #[schemars(description = "ADB serial number identifying the device to install to")]
+    serial: String,
+    #[schemars(description = "Absolute path to an APK file on the MCP server host")]
+    apk_path: String,
+    #[serde(default)]
+    #[schemars(
+        description = "Replace an installed app while preserving its data; defaults to false"
+    )]
+    replace: bool,
+    #[serde(default)]
+    #[schemars(description = "Allow a version downgrade; implies replace; defaults to false")]
+    downgrade: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct UninstallAppRequest {
+    #[schemars(description = "ADB serial number identifying the device to uninstall from")]
+    serial: String,
+    #[schemars(description = "Android application package name (application ID)")]
+    package: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ScreenElementsRequest {
     #[schemars(description = "ADB serial number identifying the device to inspect")]
     serial: String,
@@ -336,6 +360,42 @@ impl AndroidMcpServer {
                     "Cannot serialize ADB app list: {error}"
                 ))]),
             },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Install an app from file (.apk)")]
+    async fn adb_install_app(
+        &self,
+        Parameters(request): Parameters<InstallAppRequest>,
+    ) -> CallToolResult {
+        match adb::install_app(
+            &self.adb_executable,
+            &request.serial,
+            std::path::Path::new(&request.apk_path),
+            request.replace,
+            request.downgrade,
+        )
+        .await
+        {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Installed APK on {}",
+                request.serial
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Uninstall an app by its package name or bundle ID")]
+    async fn adb_uninstall_app(
+        &self,
+        Parameters(request): Parameters<UninstallAppRequest>,
+    ) -> CallToolResult {
+        match adb::uninstall_app(&self.adb_executable, &request.serial, &request.package).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Uninstalled {} from {}",
+                request.package, request.serial
+            ))]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         }
     }

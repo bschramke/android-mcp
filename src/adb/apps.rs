@@ -1,19 +1,108 @@
-use std::{io, path::Path, time::Duration};
+use std::{ffi::OsString, fs, io, path::Path, time::Duration};
 
 use tokio::time::Instant;
 
 use super::{
-    command::{CommandOptions, ensure_success, run_shell},
+    command::{CommandOptions, ensure_success, run_adb, run_shell},
     device_info::validate_serial,
+    logcat::validate_package,
 };
 
 const APPS_OUTPUT_LIMIT: usize = 256 * 1024;
 const APPS_STDERR_LIMIT: usize = 16 * 1024;
+const APP_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+const APP_UNINSTALL_TIMEOUT: Duration = Duration::from_secs(30);
+const APP_ACTION_STDOUT_LIMIT: usize = 64 * 1024;
+const APP_ACTION_STDERR_LIMIT: usize = 16 * 1024;
 
 #[derive(Debug, PartialEq, serde::Serialize)]
 pub struct AppList {
     pub serial: String,
     pub apps: Vec<String>,
+}
+
+pub async fn install_app(
+    executable: &Path,
+    serial: &str,
+    apk_path: &Path,
+    replace: bool,
+    downgrade: bool,
+) -> io::Result<()> {
+    validate_serial(serial)?;
+    validate_apk_path(apk_path)?;
+
+    let mut arguments = vec![
+        OsString::from("-s"),
+        OsString::from(serial),
+        OsString::from("install"),
+    ];
+    if replace || downgrade {
+        arguments.push(OsString::from("-r"));
+    }
+    if downgrade {
+        arguments.push(OsString::from("-d"));
+    }
+    arguments.push(apk_path.as_os_str().to_os_string());
+
+    let output = run_adb(
+        executable,
+        arguments,
+        "app installation",
+        CommandOptions::new(
+            Instant::now() + APP_INSTALL_TIMEOUT,
+            APP_ACTION_STDOUT_LIMIT,
+            APP_ACTION_STDERR_LIMIT,
+        )
+        .with_timeout_message("ADB app installation timed out after 120 seconds"),
+    )
+    .await?;
+    ensure_success(&output, "app installation")
+}
+
+pub async fn uninstall_app(executable: &Path, serial: &str, package: &str) -> io::Result<()> {
+    validate_serial(serial)?;
+    validate_package(package)?;
+
+    let output = run_adb(
+        executable,
+        ["-s", serial, "uninstall", package],
+        "app uninstallation",
+        CommandOptions::new(
+            Instant::now() + APP_UNINSTALL_TIMEOUT,
+            APP_ACTION_STDOUT_LIMIT,
+            APP_ACTION_STDERR_LIMIT,
+        )
+        .with_timeout_message("ADB app uninstallation timed out after 30 seconds"),
+    )
+    .await?;
+    ensure_success(&output, "app uninstallation")
+}
+
+fn validate_apk_path(path: &Path) -> io::Result<()> {
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "APK path must be absolute",
+        ));
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("apk"))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "APK path must use the .apk extension",
+        ));
+    }
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "APK path must point to a file",
+        ));
+    }
+    Ok(())
 }
 
 pub async fn list_apps(
