@@ -510,6 +510,33 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() == 6
+        && args[0] == "-s"
+        && args[2..] == ["shell", "dumpsys", "activity", "activities"]
+    {
+        if args[1] != "emulator-5554" && args[1] != "emulator-5556" {
+            eprintln!("Unexpected foreground-app serial argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("foreground_mresumed") => {
+                println!("mResumedActivity: ActivityRecord{{abc u0 com.example.app/.MainActivity t42}}");
+            }
+            Ok("foreground_resumed") => {
+                println!("ResumedActivity: ActivityRecord{{abc u0 com.example.app/com.example.app.Home t42}}");
+            }
+            Ok("foreground_none") => println!("ACTIVITY MANAGER ACTIVITIES"),
+            Ok("foreground_failure") => {
+                eprintln!("activity dump unavailable");
+                return ExitCode::FAILURE;
+            }
+            Ok("foreground_timeout") => loop {
+                thread::park();
+            },
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args != ["devices", "-l"] {
         eprintln!("Expected exactly: devices -l");
         return ExitCode::FAILURE;

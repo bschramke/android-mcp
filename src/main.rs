@@ -355,6 +355,22 @@ impl AndroidMcpServer {
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         }
     }
+
+    #[tool(description = "Get the app currently in the foreground")]
+    async fn adb_get_foreground_app(
+        &self,
+        Parameters(request): Parameters<DeviceInfoRequest>,
+    ) -> CallToolResult {
+        match adb::get_foreground_app(&self.adb_executable, &request.serial).await {
+            Ok(app) => match serde_json::to_string(&app) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize foreground app: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
 }
 
 #[tokio::main]

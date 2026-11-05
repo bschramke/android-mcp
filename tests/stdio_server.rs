@@ -19,7 +19,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 13);
+    assert_eq!(tools.len(), 14);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -80,6 +80,23 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
     assert_eq!(
         app_info_tool.input_schema["properties"]["package"]["type"],
+        "string"
+    );
+
+    let foreground_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_get_foreground_app")
+        .ok_or("Missing foreground-app tool")?;
+    assert_eq!(
+        foreground_tool.description.as_deref(),
+        Some("Get the app currently in the foreground")
+    );
+    assert_eq!(
+        foreground_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
+    );
+    assert_eq!(
+        foreground_tool.input_schema["properties"]["serial"]["type"],
         "string"
     );
     assert_eq!(
