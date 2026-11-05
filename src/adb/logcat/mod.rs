@@ -5,6 +5,8 @@ use tokio::time::Instant;
 mod filters;
 mod package;
 
+pub(super) use package::validate as validate_package;
+
 use super::{
     command::{CommandOptions, OverflowBehavior, ensure_success, run_adb},
     model::{LogPriority, LogcatSnapshot},

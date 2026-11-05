@@ -25,6 +25,14 @@ struct ListAppsRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct AppInfoRequest {
+    #[schemars(description = "ADB serial number identifying the device to inspect")]
+    serial: String,
+    #[schemars(description = "Android application package name")]
+    package: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ScreenElementsRequest {
     #[schemars(description = "ADB serial number identifying the device to inspect")]
     serial: String,
@@ -326,6 +334,22 @@ impl AndroidMcpServer {
                 Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
                 Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
                     "Cannot serialize ADB app list: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Get details for an installed app on the device")]
+    async fn adb_app_info(
+        &self,
+        Parameters(request): Parameters<AppInfoRequest>,
+    ) -> CallToolResult {
+        match adb::app_info(&self.adb_executable, &request.serial, &request.package).await {
+            Ok(info) => match serde_json::to_string(&info) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize ADB app info: {error}"
                 ))]),
             },
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),

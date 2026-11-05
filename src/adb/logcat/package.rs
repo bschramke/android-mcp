@@ -4,7 +4,7 @@ use tokio::time::Instant;
 
 use crate::adb::command::{CommandOptions, ensure_success, run_shell};
 
-pub(super) fn validate(package: &str) -> io::Result<()> {
+pub(in crate::adb) fn validate(package: &str) -> io::Result<()> {
     let valid = package.len() <= 255
         && package.contains('.')
         && package.split('.').all(|segment| {

@@ -1,3 +1,4 @@
+mod app_info;
 mod apps;
 mod command;
 mod device_info;
@@ -7,7 +8,7 @@ mod health;
 mod logcat;
 mod model;
 mod screen;
-
+pub use app_info::app_info;
 pub use apps::list_apps;
 pub use device_info::device_info;
 pub use devices::list_devices;

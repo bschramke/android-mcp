@@ -488,6 +488,28 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() == 6
+        && args[0] == "-s"
+        && args[2..5] == ["shell", "dumpsys", "package"]
+    {
+        if args[1] != "emulator-5554" || args[5] != "com.example.app" {
+            eprintln!("Unexpected app-info serial or package argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("app_info") => print!("{}", include_str!("../fixtures/apps/app-info-dumpsys.txt")),
+            Ok("app_info_missing") => println!("Unable to find package: com.example.app"),
+            Ok("app_info_failure") => {
+                eprintln!("dumpsys unavailable");
+                return ExitCode::FAILURE;
+            }
+            Ok("app_info_timeout") => loop {
+                thread::park();
+            },
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args != ["devices", "-l"] {
         eprintln!("Expected exactly: devices -l");
         return ExitCode::FAILURE;

@@ -60,6 +60,7 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 
 ### App Management
 - **`adb_list_apps`** - List all installed apps on the device
+- **`adb_app_info`** - Get version, install, and update details for one app
 
 ### Logs
 - **`adb_logcat`** - Read a bounded snapshot of recent device logs with optional filters
@@ -122,6 +123,22 @@ preinstalled/system packages; it does not resolve human-readable app labels.
 The optional `exclude_system` boolean defaults to `false`; when set to `true`,
 the tool runs `pm list packages -3` and excludes system packages. An empty result
 is returned as an empty array. ADB failures, malformed output, invalid UTF-8,
+and the five-second timeout produce tool errors.
+
+### adb_app_info
+
+Provide a device serial and an Android package name:
+
+```json
+{"serial": "emulator-5554", "package": "com.example.app"}
+```
+
+The tool runs `adb -s <serial> shell dumpsys package <package>` and returns
+structured package metadata parsed from that dump: version code and name, min
+and target SDK, first-install and last-update timestamps, installer package name,
+and APK code path. Timestamps are returned as reported by Android; their format
+may vary by Android version. Missing fields are `null`. The raw package dump is
+not returned. ADB failures, missing packages, malformed output, invalid UTF-8,
 and the five-second timeout produce tool errors.
 
 ### adb_health_check
@@ -490,13 +507,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_list_apps,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
+	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or
