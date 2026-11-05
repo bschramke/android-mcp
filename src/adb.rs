@@ -1,3 +1,4 @@
+mod apps;
 mod command;
 mod device_info;
 mod devices;
@@ -7,6 +8,7 @@ mod logcat;
 mod model;
 mod screen;
 
+pub use apps::list_apps;
 pub use device_info::device_info;
 pub use devices::list_devices;
 pub use executable::resolve_executable;

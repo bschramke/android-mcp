@@ -48,9 +48,35 @@ daemon or require a connected device. It verifies executable availability, not
 device access or future ADB server health. Tool calls must still handle their own
 ADB failures. stdout remains reserved for MCP messages.
 
-### Available tools
+## 🔧 Available tools
 
-#### adb_list_devices
+Tools are grouped by purpose. Detailed behavior and arguments follow below.
+
+### Device & Diagnostics
+- **`adb_list_devices`** - List connected, offline, and unauthorized devices
+- **`adb_device_info`** - Read supported Android properties and display information
+- **`adb_display_info`** - Read display resolution, density, rotation, and orientation
+- **`adb_health_check`** - Diagnose ADB, device connectivity, and read-only shell access
+
+### App Management
+- **`adb_list_apps`** - List all installed apps on the device
+
+### Logs
+- **`adb_logcat`** - Read a bounded snapshot of recent device logs with optional filters
+
+### Screen Inspection & Capture
+- **`adb_list_elements_on_screen`** - List visible UI elements and their properties
+- **`adb_get_screen_hierarchy`** - Read the nested UI hierarchy
+- **`adb_take_screenshot`** - Capture a screenshot for inspection
+- **`adb_save_screenshot`** - Save a screenshot as a PNG file
+
+### Screen Recording
+- **`adb_start_screen_recording`** - Start recording a device screen to an MP4 file
+- **`adb_stop_screen_recording`** - Stop and save the active recording
+
+## Tool details
+
+### adb_list_devices
 
 `adb_list_devices` takes no arguments and runs `adb devices -l` using the
 executable resolved during startup. The call has a five-second timeout and may
@@ -81,7 +107,24 @@ timeouts, malformed output, and invalid UTF-8 produce MCP tool results with
 are captured, never forwarded directly to the MCP protocol stream. Device serial
 numbers and metadata are returned to the calling MCP client.
 
-#### adb_health_check
+### adb_list_apps
+
+Provide a device serial number as a required string argument:
+
+```json
+{"serial": "emulator-5554"}
+```
+
+The tool runs `adb -s <serial> shell pm list packages` and returns a JSON text
+object containing the serial and a sorted `apps` array of package names. The
+list includes packages reported by Android's package manager, including
+preinstalled/system packages; it does not resolve human-readable app labels.
+The optional `exclude_system` boolean defaults to `false`; when set to `true`,
+the tool runs `pm list packages -3` and excludes system packages. An empty result
+is returned as an empty array. ADB failures, malformed output, invalid UTF-8,
+and the five-second timeout produce tool errors.
+
+### adb_health_check
 
 Run the ADB binary, server, and visible-device checks. An optional serial enables
 device-specific connection, authorization, and read-only shell checks:
@@ -108,7 +151,7 @@ in the report rather than as MCP tool errors; skipped checks do not make the
 overall status unhealthy. Each ADB command has a five-second timeout. The tool
 exposes device serials and ADB metadata to the calling MCP client.
 
-#### adb_device_info
+### adb_device_info
 
 Provide a device serial number as a required string argument:
 
@@ -148,7 +191,7 @@ the complete property dump or raw `dumpsys` output. Display query failures leave
 the display fields unknown without discarding the other device information.
 This tool does not add fields or extra device queries to `adb_list_devices`.
 
-#### adb_display_info
+### adb_display_info
 
 Provide a device serial number as a required string argument. This tool returns
 the same `DisplayInfo` object embedded in `adb_device_info`, without querying
@@ -166,7 +209,7 @@ accounts for the device's natural display orientation. Unknown output formats
 produce `null` fields. ADB command failures, output-limit violations, and the
 shared five-second timeout produce tool errors.
 
-#### adb_logcat
+### adb_logcat
 
 Read a bounded snapshot of recent device logs:
 
@@ -281,7 +324,7 @@ invalid PNG output or captures larger than 16 MiB. Screenshots are returned to
 the calling client and are not persisted by this tool. Screen contents may be
 sensitive.
 
-#### adb_save_screenshot
+### adb_save_screenshot
 
 Provide a serial and an absolute `.png` destination path:
 
@@ -306,7 +349,7 @@ and byte size. The same five-second timeout and 16-MiB PNG limit apply. Saved
 screenshots persist at the specified path and may contain sensitive screen
 contents.
 
-#### adb_list_elements_on_screen
+### adb_list_elements_on_screen
 
 Provide a device serial number as a required string argument:
 
@@ -329,7 +372,7 @@ output is capped at 1 MiB. Malformed XML, ADB failures, timeouts, and output
 overflows produce tool errors. UI text and labels may contain sensitive content
 and are returned to the calling MCP client.
 
-#### adb_get_screen_hierarchy
+### adb_get_screen_hierarchy
 
 Provide a device serial number as a required string argument. This tool uses the
 same UI Automator capture as `adb_list_elements_on_screen`, but returns nodes as
@@ -339,7 +382,7 @@ for its direct child nodes. The UI Automator sibling `index` is intentionally
 omitted. The same temporary-file cleanup, ten-second timeout, 1-MiB XML limit,
 and sensitive-content considerations apply.
 
-#### adb_start_screen_recording
+### adb_start_screen_recording
 
 Start a recording for a device and choose its eventual absolute `.mp4` path:
 
@@ -353,7 +396,7 @@ recording per serial. Android's `screenrecord` runs with its 180-second maximum.
 The recording is held as a PTY session in the MCP server and uses a unique
 temporary `.mp4` path on the device.
 
-#### adb_stop_screen_recording
+### adb_stop_screen_recording
 
 Stop and save the active recording for a serial:
 
@@ -447,13 +490,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
+	--tools adb_list_devices,adb_list_apps,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or

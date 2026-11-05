@@ -442,6 +442,52 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    let is_app_listing = (args.len() == 6
+        && args[0] == "-s"
+        && args[2..] == ["shell", "pm", "list", "packages"])
+        || (args.len() == 7
+            && args[0] == "-s"
+            && args[2..6] == ["shell", "pm", "list", "packages"]
+            && args[6] == "-3");
+    if is_app_listing {
+        if args[1] != "emulator-5554"
+            && args[1] != "emulator-5556"
+            && args[1] != "serial;not-a-shell-command"
+        {
+            eprintln!("Unexpected app-list serial argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("apps") => println!("package:org.example\npackage:com.example.app\n"),
+            Ok("apps_emulator_5554") if args[1] == "emulator-5554" => {
+                print!("{}", include_str!("../fixtures/apps/emulator-5554-packages-list.txt"))
+            }
+            Ok("apps_emulator_5556") if args[1] == "emulator-5556" => {
+                print!("{}", include_str!("../fixtures/apps/emulator-5556-packages-list.txt"))
+            }
+            Ok("apps_exclude_system") if args.len() == 7 => {
+                println!("package:com.dhl.hasci.clickdummy\npackage:com.dhl.hasci.clickdummy.test\npackage:com.github.bschramke.myfinance\n")
+            }
+            Ok("apps_exclude_system") => {
+                eprintln!("Expected pm list packages -3 when excluding system apps");
+                return ExitCode::FAILURE;
+            }
+            Ok("apps_empty") => {}
+            Ok("apps_malformed") => println!("not package output"),
+            Ok("apps_invalid_utf8") => {
+                io::stdout().write_all(&[0xff, 0xfe]).unwrap();
+            }
+            Ok("apps_failure") => {
+                eprintln!("package manager unavailable");
+                return ExitCode::FAILURE;
+            }
+            Ok("apps_timeout") => loop {
+                thread::park();
+            },
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args != ["devices", "-l"] {
         eprintln!("Expected exactly: devices -l");
         return ExitCode::FAILURE;

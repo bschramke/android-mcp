@@ -19,7 +19,7 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     );
 
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 11);
+    assert_eq!(tools.len(), 12);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "adb_list_devices")
@@ -47,6 +47,31 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
         tool.input_schema
             .get("required")
             .is_none_or(|value| value.as_array().is_some_and(|required| required.is_empty()))
+    );
+
+    let apps_tool = tools
+        .iter()
+        .find(|tool| tool.name == "adb_list_apps")
+        .ok_or("Missing app-list tool")?;
+    assert_eq!(
+        apps_tool.description.as_deref(),
+        Some("List all installed apps on the device")
+    );
+    assert_eq!(
+        apps_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
+    );
+    assert_eq!(
+        apps_tool.input_schema["properties"]["serial"]["type"],
+        "string"
+    );
+    assert_eq!(
+        apps_tool.input_schema["properties"]["exclude_system"]["type"],
+        "boolean"
+    );
+    assert_eq!(
+        apps_tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
     );
 
     let info_tool = tools
