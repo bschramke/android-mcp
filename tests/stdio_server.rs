@@ -2,13 +2,34 @@
 
 mod support;
 
-use rmcp::{model::CallToolRequestParams, service::ServiceError};
+use rmcp::{
+    model::{CallToolRequestParams, Tool},
+    service::ServiceError,
+};
 use support::adb::connect;
-use support::{TIMEOUT, TestResult, disconnect};
-use tokio::time::timeout;
+use support::{Client, TIMEOUT, TestResult, disconnect};
+use tokio::{process::Child, time::timeout};
 
-#[tokio::test]
-async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
+const TOOL_NAMES: [&str; 16] = [
+    "adb_list_devices",
+    "adb_device_info",
+    "adb_display_info",
+    "adb_health_check",
+    "adb_logcat",
+    "adb_take_screenshot",
+    "adb_save_screenshot",
+    "adb_list_elements_on_screen",
+    "adb_get_screen_hierarchy",
+    "adb_start_screen_recording",
+    "adb_stop_screen_recording",
+    "adb_list_apps",
+    "adb_app_info",
+    "adb_get_foreground_app",
+    "adb_install_app",
+    "adb_uninstall_app",
+];
+
+async fn discover_tools() -> TestResult<(Client, Child, Vec<Tool>)> {
     let (client, child) = connect("empty").await?;
     let info = client
         .peer_info()
@@ -17,168 +38,223 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
         info.capabilities.tools.is_some(),
         "Server must advertise tools"
     );
-
     let tools = timeout(TIMEOUT, client.list_all_tools()).await??;
-    assert_eq!(tools.len(), 16);
+    Ok((client, child, tools))
+}
+
+async fn discover_tool(name: &str) -> TestResult<(Client, Child, Tool)> {
+    let (client, child, tools) = discover_tools().await?;
     let tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_list_devices")
-        .ok_or("Missing list tool")?;
-    assert_eq!(tool.name, "adb_list_devices");
+        .into_iter()
+        .find(|tool| tool.name == name)
+        .ok_or_else(|| std::io::Error::other(format!("Missing {name} tool")))?;
+    Ok((client, child, tool))
+}
+
+#[tokio::test]
+async fn initializes_and_discovers_registered_tools() -> TestResult {
+    // Given: the MCP server is initialized and its tools are listed.
+    let (client, child, tools) = discover_tools().await?;
+
+    // When: the registered tool names are collected.
+    // Then: every expected tool is present.
+    assert_eq!(tools.len(), TOOL_NAMES.len());
+    for name in TOOL_NAMES {
+        assert!(tools.iter().any(|tool| tool.name == name), "Missing {name}");
+    }
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_list_devices_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_list_devices").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: device listing takes no arguments.
     assert_eq!(
         tool.description.as_deref(),
         Some(
             "List Android devices visible to the local ADB server, including offline and unauthorized devices"
         )
     );
-    assert_eq!(
-        tool.input_schema
-            .get("type")
-            .and_then(|value| value.as_str()),
-        Some("object")
-    );
-    assert!(
-        tool.input_schema
-            .get("properties")
-            .and_then(|value| value.as_object())
-            .is_some_and(|properties| properties.is_empty())
-    );
-    assert!(
-        tool.input_schema
-            .get("required")
-            .is_none_or(|value| value.as_array().is_some_and(|required| required.is_empty()))
-    );
+    assert_eq!(schema["type"], "object");
+    assert!(schema["properties"].as_object().unwrap().is_empty());
+    assert!(schema.get("required").is_none());
+    disconnect(client, child).await
+}
 
-    let apps_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_list_apps")
-        .ok_or("Missing app-list tool")?;
+#[tokio::test]
+async fn exposes_adb_device_info_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_device_info").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is the only required string argument.
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_display_info_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_display_info").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is the only required string argument.
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_health_check_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_health_check").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is optional and the description explains the ADB server side effect.
     assert_eq!(
-        apps_tool.description.as_deref(),
+        schema["properties"]["serial"]["type"],
+        serde_json::json!(["string", "null"])
+    );
+    assert!(schema.get("required").is_none());
+    assert!(
+        tool.description
+            .as_deref()
+            .is_some_and(|description| { description.contains("may start the local ADB server") })
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_list_apps_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_list_apps").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is required and system exclusion is optional.
+    assert_eq!(
+        tool.description.as_deref(),
         Some("List all installed apps on the device")
     );
-    assert_eq!(
-        apps_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["exclude_system"]["type"], "boolean");
+    disconnect(client, child).await
+}
 
-    let app_info_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_app_info")
-        .ok_or("Missing app-info tool")?;
+#[tokio::test]
+async fn exposes_adb_app_info_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_app_info").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial and package are required strings.
     assert_eq!(
-        app_info_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Get details for an installed app on the device")
     );
     assert_eq!(
-        app_info_tool.input_schema.get("required"),
+        schema.get("required"),
         Some(&serde_json::json!(["serial", "package"]))
     );
-    assert_eq!(
-        app_info_tool.input_schema["properties"]["serial"]["type"],
-        "string"
-    );
-    assert_eq!(
-        app_info_tool.input_schema["properties"]["package"]["type"],
-        "string"
-    );
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
 
-    let foreground_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_get_foreground_app")
-        .ok_or("Missing foreground-app tool")?;
+#[tokio::test]
+async fn exposes_adb_get_foreground_app_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_get_foreground_app").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is the only required string argument.
     assert_eq!(
-        foreground_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Get the app currently in the foreground")
     );
-    assert_eq!(
-        foreground_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
-    assert_eq!(
-        foreground_tool.input_schema["properties"]["serial"]["type"],
-        "string"
-    );
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    disconnect(client, child).await
+}
 
-    let install_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_install_app")
-        .ok_or("Missing app-install tool")?;
+#[tokio::test]
+async fn exposes_adb_install_app_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_install_app").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial and APK path are required; replace and downgrade are optional flags.
     assert_eq!(
-        install_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Install an app from file (.apk)")
     );
     assert_eq!(
-        install_tool.input_schema.get("required"),
+        schema.get("required"),
         Some(&serde_json::json!(["serial", "apk_path"]))
     );
-    assert_eq!(
-        install_tool.input_schema["properties"]["replace"]["type"],
-        "boolean"
-    );
-    assert_eq!(
-        install_tool.input_schema["properties"]["downgrade"]["type"],
-        "boolean"
-    );
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["apk_path"]["type"], "string");
+    assert_eq!(schema["properties"]["replace"]["type"], "boolean");
+    assert_eq!(schema["properties"]["downgrade"]["type"], "boolean");
+    disconnect(client, child).await
+}
 
-    let uninstall_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_uninstall_app")
-        .ok_or("Missing app-uninstall tool")?;
+#[tokio::test]
+async fn exposes_adb_uninstall_app_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_uninstall_app").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial and package are required strings.
     assert_eq!(
-        uninstall_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Uninstall an app by its package name or bundle ID")
     );
     assert_eq!(
-        uninstall_tool.input_schema.get("required"),
+        schema.get("required"),
         Some(&serde_json::json!(["serial", "package"]))
     );
-    assert_eq!(
-        apps_tool.input_schema["properties"]["serial"]["type"],
-        "string"
-    );
-    assert_eq!(
-        apps_tool.input_schema["properties"]["exclude_system"]["type"],
-        "boolean"
-    );
-    assert_eq!(
-        apps_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
 
-    let info_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_device_info")
-        .ok_or("Missing info tool")?;
-    assert_eq!(
-        info_tool.input_schema.get("type"),
-        Some(&serde_json::json!("object"))
-    );
-    assert_eq!(
-        info_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
-    let properties = info_tool
-        .input_schema
-        .get("properties")
-        .and_then(|value| value.as_object())
-        .ok_or("Missing properties")?;
-    assert_eq!(properties.len(), 1);
-    assert_eq!(properties["serial"]["type"], "string");
+#[tokio::test]
+async fn exposes_adb_logcat_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_logcat").await?;
 
-    let logcat_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_logcat")
-        .ok_or("Missing logcat tool")?;
-    assert_eq!(
-        logcat_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
-    let properties = logcat_tool
-        .input_schema
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+    let properties = schema
         .get("properties")
         .and_then(|value| value.as_object())
         .ok_or("Missing logcat properties")?;
+
+    // Then: serial, limits, and optional filters match the public schema.
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
     assert_eq!(properties.len(), 6);
     assert_eq!(properties["serial"]["type"], "string");
     assert_eq!(properties["max_lines"]["default"], 200);
@@ -190,160 +266,146 @@ async fn initializes_and_discovers_adb_list_devices_tool() -> TestResult {
     assert_eq!(properties["tags"]["items"]["type"], "string");
     assert_eq!(properties["tags"]["maxItems"], 20);
     assert!(properties.contains_key("priority"));
+    disconnect(client, child).await
+}
 
-    let health_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_health_check")
-        .ok_or("Missing health-check tool")?;
-    assert_eq!(
-        health_tool.input_schema.get("type"),
-        Some(&serde_json::json!("object"))
-    );
-    let health_properties = health_tool
-        .input_schema
-        .get("properties")
-        .and_then(|value| value.as_object())
-        .ok_or("Missing health-check properties")?;
-    assert_eq!(health_properties.len(), 1);
-    assert!(health_properties.contains_key("serial"));
-    assert!(
-        health_tool
-            .input_schema
-            .get("required")
-            .is_none_or(|value| value.as_array().is_some_and(|required| required.is_empty()))
-    );
-    assert!(
-        health_tool
-            .description
-            .as_deref()
-            .is_some_and(|description| description.contains("may start the local ADB server"))
-    );
+#[tokio::test]
+async fn exposes_adb_take_screenshot_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_take_screenshot").await?;
 
-    let display_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_display_info")
-        .ok_or("Missing display-info tool")?;
-    assert_eq!(
-        display_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
-    assert_eq!(
-        display_tool.input_schema["properties"]["serial"]["type"],
-        "string"
-    );
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
 
-    let screenshot_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_take_screenshot")
-        .ok_or("Missing take-screenshot tool")?;
+    // Then: the tool has its documented description and required serial.
     assert_eq!(
-        screenshot_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Take a screenshot to understand what's on screen")
     );
-    assert_eq!(
-        screenshot_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    disconnect(client, child).await
+}
 
-    let save_screenshot_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_save_screenshot")
-        .ok_or("Missing save-screenshot tool")?;
+#[tokio::test]
+async fn exposes_adb_save_screenshot_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_save_screenshot").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial/path are required and overwrite is an optional boolean.
     assert_eq!(
-        save_screenshot_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Save a screenshot to a file")
     );
     assert_eq!(
-        save_screenshot_tool.input_schema.get("required"),
+        schema.get("required"),
         Some(&serde_json::json!(["serial", "path"]))
     );
-    assert_eq!(
-        save_screenshot_tool.input_schema["properties"]["overwrite"]["type"],
-        "boolean"
-    );
+    assert_eq!(schema["properties"]["overwrite"]["type"], "boolean");
     assert!(
-        save_screenshot_tool.input_schema["required"]
+        schema["required"]
             .as_array()
             .unwrap()
             .iter()
             .all(|required| required != "overwrite")
     );
+    disconnect(client, child).await
+}
 
-    let ui_elements_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_list_elements_on_screen")
-        .ok_or("Missing UI-elements tool")?;
+#[tokio::test]
+async fn exposes_adb_list_elements_on_screen_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_list_elements_on_screen").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is required and the UI-element description is exposed.
     assert_eq!(
-        ui_elements_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("List UI elements with their coordinates and properties")
     );
-    assert_eq!(
-        ui_elements_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    disconnect(client, child).await
+}
 
-    let hierarchy_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_get_screen_hierarchy")
-        .ok_or("Missing screen-hierarchy tool")?;
-    assert_eq!(
-        hierarchy_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
+#[tokio::test]
+async fn exposes_adb_get_screen_hierarchy_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_get_screen_hierarchy").await?;
 
-    let start_recording_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_start_screen_recording")
-        .ok_or("Missing start-recording tool")?;
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is required.
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_start_screen_recording_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_start_screen_recording").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial/path are required and overwrite is optional.
     assert_eq!(
-        start_recording_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Start recording the device screen to a video file")
     );
     assert_eq!(
-        start_recording_tool.input_schema.get("required"),
+        schema.get("required"),
         Some(&serde_json::json!(["serial", "path"]))
     );
-    assert_eq!(
-        start_recording_tool.input_schema["properties"]["overwrite"]["type"],
-        "boolean"
-    );
+    assert_eq!(schema["properties"]["overwrite"]["type"], "boolean");
     assert!(
-        start_recording_tool.input_schema["required"]
+        schema["required"]
             .as_array()
             .unwrap()
             .iter()
             .all(|required| required != "overwrite")
     );
+    disconnect(client, child).await
+}
 
-    let stop_recording_tool = tools
-        .iter()
-        .find(|tool| tool.name == "adb_stop_screen_recording")
-        .ok_or("Missing stop-recording tool")?;
+#[tokio::test]
+async fn exposes_adb_stop_screen_recording_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_stop_screen_recording").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial is the only required string argument.
     assert_eq!(
-        stop_recording_tool.description.as_deref(),
+        tool.description.as_deref(),
         Some("Stop the active screen recording and save the video")
     );
-    assert_eq!(
-        stop_recording_tool.input_schema.get("required"),
-        Some(&serde_json::json!(["serial"]))
-    );
-
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
     disconnect(client, child).await
 }
 
 #[tokio::test]
 async fn unknown_tool_returns_protocol_error_without_stopping_server() -> TestResult {
+    // Given: the MCP server is connected.
     let (client, child) = connect("empty").await?;
+
+    // When: an unknown tool is called.
     let result = timeout(
         TIMEOUT,
         client.call_tool(CallToolRequestParams::new("unknown_tool")),
     )
     .await?;
+
+    // Then: the call returns a protocol error and the server remains usable.
     assert!(
         matches!(result, Err(ServiceError::McpError(_))),
         "Expected an MCP protocol error, got {result:?}"
     );
-
     let listing = timeout(
         TIMEOUT,
         client.call_tool(CallToolRequestParams::new("adb_list_devices")),
