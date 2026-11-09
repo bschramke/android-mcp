@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, io, path::Path, time::Duration};
 use tokio::time::Instant;
 
 use super::{
-    command::{CommandOptions, ensure_success, run_shell},
+    command::{CommandOptions, ensure_success, run_adb, run_shell},
     model::{AndroidInfo, BuildInfo, CpuInfo, DeviceInfo, HardwareInfo, ProductInfo},
     screen::display_info_until,
 };
@@ -28,10 +28,29 @@ pub async fn device_info(executable: &Path, serial: &str) -> io::Result<DeviceIn
         )
     })?;
     let mut info = parse_device_info(serial, stdout)?;
-    info.display = display_info_until(executable, serial, deadline)
-        .await
-        .unwrap_or_default();
+    let (emulator_console_available, display) = tokio::join!(
+        probe_emulator_console(executable, serial, deadline),
+        display_info_until(executable, serial, deadline),
+    );
+    info.emulator_console_available = emulator_console_available;
+    info.display = display.unwrap_or_default();
     Ok(info)
+}
+
+async fn probe_emulator_console(
+    executable: &Path,
+    serial: &str,
+    deadline: Instant,
+) -> Option<bool> {
+    let output = run_adb(
+        executable,
+        ["-s", serial, "emu", "ping"],
+        "emulator console check",
+        CommandOptions::new(deadline, 4 * 1024, 16 * 1024),
+    )
+    .await
+    .ok()?;
+    Some(output.status.success())
 }
 
 pub(super) fn validate_serial(serial: &str) -> io::Result<()> {
@@ -164,6 +183,7 @@ fn parse_device_info(serial: &str, output: &str) -> io::Result<DeviceInfo> {
         },
         boot_completed: boolean("sys.boot_completed"),
         is_emulator: boolean("ro.kernel.qemu"),
+        emulator_console_available: None,
         display: Default::default(),
     })
 }

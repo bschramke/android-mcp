@@ -123,6 +123,7 @@ pub struct DeviceInfo {
     pub build: BuildInfo,
     pub boot_completed: Option<bool>,
     pub is_emulator: Option<bool>,
+    pub emulator_console_available: Option<bool>,
     pub display: DisplayInfo,
 }
 

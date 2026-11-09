@@ -10,10 +10,13 @@ use support::adb::connect;
 use support::{Client, TIMEOUT, TestResult, disconnect};
 use tokio::{process::Child, time::timeout};
 
-const TOOL_NAMES: [&str; 23] = [
+const TOOL_NAMES: [&str; 26] = [
     "adb_list_devices",
     "adb_device_info",
     "adb_display_info",
+    "adb_get_screen_orientation",
+    "adb_set_screen_orientation",
+    "adb_emu_rotate",
     "adb_health_check",
     "adb_logcat",
     "adb_take_screenshot",
@@ -118,6 +121,67 @@ async fn exposes_adb_display_info_schema() -> TestResult {
     // Then: serial is the only required string argument.
     assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
     assert_eq!(schema["properties"]["serial"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_get_screen_orientation_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_get_screen_orientation").await?;
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial"]))
+    );
+    assert_eq!(tool.input_schema["properties"]["serial"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_set_screen_orientation_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_set_screen_orientation").await?;
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "orientation"]))
+    );
+    assert_eq!(tool.input_schema["properties"]["serial"]["type"], "string");
+    let reference = tool.input_schema["properties"]["orientation"]["$ref"]
+        .as_str()
+        .ok_or("Missing orientation schema reference")?;
+    let document = serde_json::to_value(&tool.input_schema)?;
+    let orientation = document
+        .pointer(
+            reference
+                .strip_prefix('#')
+                .ok_or("Expected local orientation schema reference")?,
+        )
+        .ok_or("Missing orientation definition")?;
+    assert_eq!(orientation["type"], "string");
+    assert_eq!(
+        orientation["enum"],
+        serde_json::json!(["portrait", "landscape", "auto"])
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_emu_rotate_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_emu_rotate").await?;
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "direction"]))
+    );
+    assert_eq!(tool.input_schema["properties"]["serial"]["type"], "string");
+    let reference = tool.input_schema["properties"]["direction"]["$ref"]
+        .as_str()
+        .ok_or("Missing direction schema reference")?;
+    let document = serde_json::to_value(&tool.input_schema)?;
+    let direction = document
+        .pointer(
+            reference
+                .strip_prefix('#')
+                .ok_or("Expected local direction schema reference")?,
+        )
+        .ok_or("Missing direction definition")?;
+    assert_eq!(direction["enum"], serde_json::json!(["left", "right"]));
     disconnect(client, child).await
 }
 

@@ -56,6 +56,8 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_list_devices`** - List connected, offline, and unauthorized devices
 - **`adb_device_info`** - Read supported Android properties and display information
 - **`adb_display_info`** - Read display resolution, density, rotation, and orientation
+- **`adb_get_screen_orientation`** - Read the current screen orientation and rotation angle
+- **`adb_set_screen_orientation`** - Lock to portrait/landscape or release the lock with `auto`
 - **`adb_health_check`** - Diagnose ADB, device connectivity, and read-only shell access
 
 ### App Management
@@ -73,6 +75,7 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_input_text`** - Enter printable ASCII text into the focused field
 - **`adb_press_key`** - Press a supported Android key
 - **`adb_open_url`** - Open an HTTP(S) URL with the Android default handler (usually the default browser)
+- **`adb_emu_rotate`** - Simulate rotating an Android Emulator device left or right without locking orientation
 
 ### Logs
 - **`adb_logcat`** - Read a bounded snapshot of recent device logs with optional filters
@@ -88,6 +91,18 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_stop_screen_recording`** - Stop and save the active recording
 
 ## Tool details
+
+### Screen orientation
+
+`adb_set_screen_orientation` changes the device-wide rotation mode. `portrait`
+and `landscape` lock the corresponding primary orientation; `auto` releases the
+lock and returns rotation control to Android. `auto` does not restore a previous
+manual rotation lock.
+
+`adb_emu_rotate` uses the Emulator console's clockwise 90-degree `rotate`
+command to simulate rotating the whole device. Right uses one command; left uses
+three. It is supported only by the Android Emulator, not physical devices, and a
+failed left rotation may have already applied one or more quarter-turns.
 
 ### Input behavior and limits
 
@@ -319,10 +334,11 @@ Provide a device serial number as a required string argument:
 ```
 
 The tool runs `adb -s <serial> shell getprop` using the resolved ADB executable,
-without shell interpolation. It then reads display data using `wm size`,
-`wm density`, and `dumpsys window displays`. The serial is passed as one literal
-argument and must not be empty or contain whitespace or NUL characters. All
-commands share one five-second timeout.
+without shell interpolation. It also checks `adb -s <serial> emu ping` to report
+whether the emulator console is available, and reads display data using `wm size`,
+`wm density`, and `dumpsys window displays`. These checks share one five-second
+timeout. The serial is passed as one literal argument and must not be empty or
+contain whitespace or NUL characters.
 
 The JSON text result preserves the nested `DeviceInfo` structure:
 
@@ -336,14 +352,17 @@ The JSON text result preserves the nested `DeviceInfo` structure:
 | `build` | `id`, `fingerprint`, `incremental`, `build_type`, `tags` from `ro.build.id`, `ro.build.fingerprint`, `ro.build.version.incremental`, `ro.build.type`, `ro.build.tags` |
 | `boot_completed` | `sys.boot_completed`: `1` becomes `true`, `0` becomes `false` |
 | `is_emulator` | `ro.kernel.qemu`: `1` becomes `true`, `0` becomes `false` |
+| `emulator_console_available` | Whether `adb emu ping` succeeds; independent of `is_emulator` |
 | `display` | Physical, overridden, and current pixel resolution; effective density in dpi; derived size in dp; rotation and orientation from `wm size`, `wm density`, and `dumpsys window displays` |
 
 Missing or empty scalar properties are `null`; missing ABI lists are `[]`.
 Unknown boolean values remain `null`, so a missing emulator flag is not treated
-as proof of a physical device. Invalid nonempty API-level numbers, malformed or
-empty property output, invalid UTF-8, unavailable/offline/unauthorized devices,
-and command failures/timeouts produce tool errors. The MCP connection remains
-available after a tool error.
+as proof of a physical device. A failed emulator-console probe reports `false`;
+a timeout or command-launch error leaves `emulator_console_available` as `null`
+without failing the device-info request. Invalid nonempty API-level numbers,
+malformed or empty property output, invalid UTF-8, unavailable/offline/unauthorized
+devices, and required command failures/timeouts produce tool errors. The MCP
+connection remains available after a tool error.
 
 Only the documented properties and parsed display fields are returned, never
 the complete property dump or raw `dumpsys` output. Display query failures leave

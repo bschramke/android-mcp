@@ -42,6 +42,20 @@ pub(in crate::adb) async fn display_info_until(
     Ok(parse_display_info(&size, &density, &window))
 }
 
+pub(super) async fn physical_resolution_until(
+    executable: &Path,
+    serial: &str,
+    deadline: Instant,
+) -> io::Result<ScreenDimensions> {
+    let size = run_display_query(executable, serial, ["wm", "size"], "wm size", deadline).await?;
+    parse_size(&size, "Physical size:").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Cannot determine physical display resolution",
+        )
+    })
+}
+
 async fn run_display_query<I, S>(
     executable: &Path,
     serial: &str,

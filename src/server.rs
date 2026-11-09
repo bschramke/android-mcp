@@ -136,6 +136,22 @@ struct OpenUrlRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct SetScreenOrientationRequest {
+    #[schemars(description = "ADB serial number identifying the device to change")]
+    serial: String,
+    #[schemars(description = "portrait, landscape, or auto to release the orientation lock")]
+    orientation: adb::ScreenOrientationMode,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct EmuRotateRequest {
+    #[schemars(description = "ADB serial number identifying the Android Emulator")]
+    serial: String,
+    #[schemars(description = "Direction to rotate the Android Emulator device: left or right")]
+    direction: adb::EmuRotationDirection,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ScreenElementsRequest {
     #[schemars(description = "ADB serial number identifying the device to inspect")]
     serial: String,
@@ -489,6 +505,64 @@ impl AndroidMcpServer {
                     "Cannot serialize ADB display info: {error}"
                 ))]),
             },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Read the current screen orientation and rotation angle")]
+    async fn adb_get_screen_orientation(
+        &self,
+        Parameters(request): Parameters<DeviceInfoRequest>,
+    ) -> CallToolResult {
+        let result: Result<adb::ScreenOrientationInfo, _> =
+            adb::get_screen_orientation(&self.adb_executable, &request.serial).await;
+        match result {
+            Ok(info) => match serde_json::to_string(&info) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize screen orientation: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
+        description = "Lock screen orientation to portrait or landscape, or use auto to release the lock"
+    )]
+    async fn adb_set_screen_orientation(
+        &self,
+        Parameters(request): Parameters<SetScreenOrientationRequest>,
+    ) -> CallToolResult {
+        match adb::set_screen_orientation(
+            &self.adb_executable,
+            &request.serial,
+            request.orientation,
+        )
+        .await
+        {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Set screen orientation mode to {} on {}",
+                request.orientation.as_str(),
+                request.serial
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
+        description = "Simulate rotating an Android Emulator device left or right without locking orientation"
+    )]
+    async fn adb_emu_rotate(
+        &self,
+        Parameters(request): Parameters<EmuRotateRequest>,
+    ) -> CallToolResult {
+        match adb::emu_rotate(&self.adb_executable, &request.serial, request.direction).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Simulated rotating emulator device {} on {}",
+                request.direction.as_str(),
+                request.serial
+            ))]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         }
     }

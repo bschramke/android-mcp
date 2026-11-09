@@ -370,6 +370,62 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() >= 6
+        && args[0] == "-s"
+        && args[2..5] == ["shell", "wm", "set-user-rotation"]
+    {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected orientation serial argument");
+            return ExitCode::FAILURE;
+        }
+        let expected = match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("orientation_portrait_phone") => "lock 0",
+            Ok("orientation_landscape_phone") => "lock 1",
+            Ok("orientation_portrait_tablet") => "lock 1",
+            Ok("orientation_landscape_tablet") => "lock 0",
+            Ok("orientation_auto") => "free",
+            _ => {
+                eprintln!("Unexpected orientation mode");
+                return ExitCode::FAILURE;
+            }
+        };
+        if args[5..].join(" ") != expected {
+            eprintln!("Unexpected orientation command: {:?}", &args[5..]);
+            return ExitCode::FAILURE;
+        }
+        println!("User rotation set");
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 4 && args[0] == "-s" && args[2..] == ["emu", "rotate"] {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected emulator-rotation serial argument");
+            return ExitCode::FAILURE;
+        }
+        let trace = env::var_os("ANDROID_MCP_TEST_ROTATE_TRACE").unwrap();
+        let current_turn = fs::read_to_string(&trace)
+            .map(|contents| contents.lines().count())
+            .unwrap_or_default()
+            + 1;
+        writeln!(
+            OpenOptions::new().create(true).append(true).open(&trace).unwrap(),
+            "rotate"
+        )
+        .unwrap();
+        if env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() == Ok("rotate_fail_second")
+            && current_turn == 2
+        {
+            eprintln!("emulator console rotation failed");
+            return ExitCode::FAILURE;
+        }
+        if env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() != Ok("rotate")
+            && env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() != Ok("rotate_fail_second")
+        {
+            eprintln!("Unexpected emulator-rotation mode");
+            return ExitCode::FAILURE;
+        }
+        println!("OK");
+        return ExitCode::SUCCESS;
+    }
     if args.len() == 5 && args[0] == "-s" && args[2] == "shell" && args[3..] == ["wm", "size"] {
         if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
             eprintln!("Unexpected display-info serial argument");
@@ -384,6 +440,10 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
             Ok("display_unknown") => println!("Physical size: unknown"),
+            Ok("orientation_portrait_tablet") | Ok("orientation_landscape_tablet") => {
+                println!("Physical size: 2400x1080")
+            }
+            Ok("orientation_unknown_size") => println!("Physical size: unknown"),
             _ => println!("Physical size: 1080x2400\nOverride size: 720x1600"),
         }
         return ExitCode::SUCCESS;
@@ -414,6 +474,26 @@ fn main() -> ExitCode {
         println!("Display: mDisplayId=0\nmRotation={rotation}");
         return ExitCode::SUCCESS;
     }
+    if args.len() == 4 && args[0] == "-s" && args[2..] == ["emu", "ping"] {
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("info_tc57") | Ok("info_partial") | Ok("info_console_unavailable") => {
+                eprintln!("emulator console unavailable");
+                return ExitCode::FAILURE;
+            }
+            Ok("info_console_timeout") => loop {
+                thread::park();
+            },
+            Ok("info")
+            | Ok("info_display_failure")
+            | Ok("info_emulator")
+            | Ok("info_qemu_false_console_available") => println!("I am alive!"),
+            _ => {
+                eprintln!("Unexpected emulator console check");
+                return ExitCode::FAILURE;
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
     if args.len() == 4 && args[0] == "-s" && args[2..] == ["shell", "getprop"] {
         if args[1] != "emulator-5554" && args[1] != "serial;not-a-shell-command" {
             eprintln!("Unexpected serial argument");
@@ -426,6 +506,12 @@ fn main() -> ExitCode {
             }
             Ok("info_tc57") => print!("{}", include_str!("../fixtures/getprop/tc57.txt")),
             Ok("info_emulator") => print!("{}", include_str!("../fixtures/getprop/emulator.txt")),
+            Ok("info_qemu_false_console_available") => {
+                println!("[ro.kernel.qemu]: [0]")
+            }
+            Ok("info_console_unavailable") | Ok("info_console_timeout") => {
+                println!("[ro.product.model]: [Test Device]")
+            }
             Ok("info_partial") => println!("[ro.product.model]: [Partial Phone]\n"),
             Ok("info_unauthorized") | Ok("info_offline") | Ok("info_not_found") => {
                 eprintln!(

@@ -381,6 +381,7 @@ async fn device_info_returns_nested_supported_properties_only() -> TestResult {
             "android": {"release": "15", "api_level": 35, "security_patch": "2026-10-05"},
             "build": {"id": "BUILD.ID", "fingerprint": "brand/product/device:15/BUILD.ID/123:user/release-keys", "incremental": "123", "build_type": "user", "tags": "release-keys"},
             "boot_completed": true, "is_emulator": true,
+            "emulator_console_available": true,
             "display": {
                 "physical_resolution_px": {"width": 1080, "height": 2400},
                 "override_resolution_px": {"width": 720, "height": 1600},
@@ -399,6 +400,20 @@ async fn device_info_returns_nested_supported_properties_only() -> TestResult {
 fn display_info_request(serial: &str) -> CallToolRequestParams {
     let mut request = CallToolRequestParams::new("adb_display_info");
     request.arguments = serde_json::json!({"serial": serial}).as_object().cloned();
+    request
+}
+
+fn get_screen_orientation_request(serial: &str) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_get_screen_orientation");
+    request.arguments = serde_json::json!({"serial": serial}).as_object().cloned();
+    request
+}
+
+fn set_screen_orientation_request(serial: &str, orientation: &str) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_set_screen_orientation");
+    request.arguments = serde_json::json!({"serial": serial, "orientation": orientation})
+        .as_object()
+        .cloned();
     request
 }
 
@@ -427,6 +442,66 @@ async fn display_info_reports_resolution_density_rotation_and_orientation() -> T
     assert_eq!(info["size_dp"]["height"], 262);
     assert_eq!(info["rotation_degrees"], 90);
     assert_eq!(info["orientation"], "landscape");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn get_screen_orientation_reports_orientation_and_rotation() -> TestResult {
+    let (client, child) = connect("display").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(get_screen_orientation_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let info: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected orientation JSON")?
+            .text,
+    )?;
+    assert_eq!(info["orientation"], "landscape");
+    assert_eq!(info["rotation_degrees"], 90);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn set_screen_orientation_maps_modes_for_phone_and_tablet() -> TestResult {
+    for (mode, orientation) in [
+        ("orientation_portrait_phone", "portrait"),
+        ("orientation_landscape_phone", "landscape"),
+        ("orientation_portrait_tablet", "portrait"),
+        ("orientation_landscape_tablet", "landscape"),
+        ("orientation_auto", "auto"),
+    ] {
+        let (client, child) = connect(mode).await?;
+        let result = timeout(
+            TIMEOUT,
+            client.call_tool(set_screen_orientation_request("emulator-5554", orientation)),
+        )
+        .await??;
+        assert_ne!(result.is_error, Some(true), "{mode}: {result:?}");
+        disconnect(client, child).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_screen_orientation_requires_physical_size() -> TestResult {
+    let (client, child) = connect("orientation_unknown_size").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(set_screen_orientation_request("emulator-5554", "landscape")),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .as_text()
+            .ok_or("Expected physical-size error")?
+            .text
+            .contains("Cannot determine physical display resolution")
+    );
     disconnect(client, child).await
 }
 
@@ -535,6 +610,7 @@ async fn assert_dump_profile(
     model: &str,
     security_patch: &str,
     emulator: serde_json::Value,
+    emulator_console_available: serde_json::Value,
 ) -> TestResult {
     let (client, child) = connect(mode).await?;
     let result = timeout(
@@ -554,13 +630,24 @@ async fn assert_dump_profile(
     assert_eq!(info["hardware"]["cpu"]["abi"], "arm64-v8a");
     assert_eq!(info["build"]["id"], "TEST.BUILD");
     assert_eq!(info["is_emulator"], emulator);
+    assert_eq!(
+        info["emulator_console_available"],
+        emulator_console_available
+    );
     assert!(!content.text.contains("redacted"));
     disconnect(client, child).await
 }
 
 #[tokio::test]
 async fn device_info_reads_anonymized_tc57_fixture() -> TestResult {
-    assert_dump_profile("info_tc57", "TC57", "2021-10-05", serde_json::Value::Null).await
+    assert_dump_profile(
+        "info_tc57",
+        "TC57",
+        "2021-10-05",
+        serde_json::Value::Null,
+        serde_json::json!(false),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -569,6 +656,7 @@ async fn device_info_reads_anonymized_emulator_fixture() -> TestResult {
         "info_emulator",
         "Android SDK built for arm64",
         "2018-01-05",
+        serde_json::json!(true),
         serde_json::json!(true),
     )
     .await
@@ -591,6 +679,46 @@ async fn device_info_missing_properties_are_null_or_empty_lists() -> TestResult 
     assert_eq!(info["hardware"]["cpu"]["abilist"], serde_json::json!([]));
     assert!(info["boot_completed"].is_null());
     assert!(info["is_emulator"].is_null());
+    assert_eq!(info["emulator_console_available"], false);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn emulator_console_availability_is_independent_of_qemu_property() -> TestResult {
+    let (client, child) = connect("info_qemu_false_console_available").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(device_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let info: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected device-info JSON")?
+            .text,
+    )?;
+    assert_eq!(info["is_emulator"], false);
+    assert_eq!(info["emulator_console_available"], true);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn emulator_console_timeout_remains_unknown_without_failing_device_info() -> TestResult {
+    let (client, child) = connect("info_console_timeout").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(device_info_request("emulator-5554")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let info: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected device-info JSON")?
+            .text,
+    )?;
+    assert!(info["emulator_console_available"].is_null());
     disconnect(client, child).await
 }
 
