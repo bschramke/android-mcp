@@ -12,6 +12,7 @@ const APPS_OUTPUT_LIMIT: usize = 256 * 1024;
 const APPS_STDERR_LIMIT: usize = 16 * 1024;
 const APP_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_UNINSTALL_TIMEOUT: Duration = Duration::from_secs(30);
+const APP_CLEAR_DATA_TIMEOUT: Duration = Duration::from_secs(30);
 const APP_ACTION_STDOUT_LIMIT: usize = 64 * 1024;
 const APP_ACTION_STDERR_LIMIT: usize = 16 * 1024;
 
@@ -76,6 +77,39 @@ pub async fn uninstall_app(executable: &Path, serial: &str, package: &str) -> io
     )
     .await?;
     ensure_success(&output, "app uninstallation")
+}
+
+pub async fn clear_app_data(executable: &Path, serial: &str, package: &str) -> io::Result<()> {
+    validate_serial(serial)?;
+    validate_package(package)?;
+
+    let output = run_shell(
+        executable,
+        serial,
+        ["pm", "clear", package],
+        "app data clear",
+        CommandOptions::new(
+            Instant::now() + APP_CLEAR_DATA_TIMEOUT,
+            APP_ACTION_STDOUT_LIMIT,
+            APP_ACTION_STDERR_LIMIT,
+        )
+        .with_timeout_message("ADB app data clear timed out after 30 seconds"),
+    )
+    .await?;
+    ensure_success(&output, "app data clear")?;
+    let stdout = std::str::from_utf8(&output.stdout).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("ADB app data clear output is not valid UTF-8: {error}"),
+        )
+    })?;
+    if stdout.trim() != "Success" {
+        return Err(io::Error::other(format!(
+            "ADB app data clear did not report Success for {package}: {}",
+            stdout.trim()
+        )));
+    }
+    Ok(())
 }
 
 fn validate_apk_path(path: &Path) -> io::Result<()> {

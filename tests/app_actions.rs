@@ -33,6 +33,14 @@ fn uninstall_request(serial: &str, package: &str) -> CallToolRequestParams {
     request
 }
 
+fn clear_app_data_request(serial: &str, package: &str) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new("adb_clear_app_data");
+    request.arguments = serde_json::json!({"serial": serial, "package": package})
+        .as_object()
+        .cloned();
+    request
+}
+
 fn create_apk_file(directory: &tempfile::TempDir) -> TestResult<std::path::PathBuf> {
     let apk_path = directory.path().join("sample app.apk");
     std::fs::write(&apk_path, b"APK fixture")?;
@@ -108,6 +116,55 @@ async fn uninstalls_app_by_package_name() -> TestResult {
     .await??;
     assert_ne!(result.is_error, Some(true));
     disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn clears_app_data_for_valid_package() -> TestResult {
+    let (client, child) = connect("clear_app_data").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(clear_app_data_request("emulator-5554", "com.example.app")),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn rejects_invalid_package_for_app_data_clear() -> TestResult {
+    let (client, child) = connect("clear_app_data").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(clear_app_data_request("emulator-5554", "com.example;id")),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn reports_app_data_clear_failures() -> TestResult {
+    for (mode, expected) in [
+        ("clear_app_data_failure", "ADB app data clear failed"),
+        ("clear_app_data_unexpected", "did not report Success"),
+    ] {
+        let (client, child) = connect(mode).await?;
+        let result = timeout(
+            TIMEOUT,
+            client.call_tool(clear_app_data_request("emulator-5554", "com.example.app")),
+        )
+        .await??;
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            result.content[0]
+                .as_text()
+                .ok_or("Expected app-data-clear error")?
+                .text
+                .contains(expected)
+        );
+        disconnect(client, child).await?;
+    }
+    Ok(())
 }
 
 #[tokio::test]

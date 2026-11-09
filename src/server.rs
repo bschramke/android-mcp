@@ -13,6 +13,72 @@ struct DeviceInfoRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct TapRequest {
+    serial: String,
+    #[schemars(range(min = 0, max = 2147483647))]
+    x: u32,
+    #[schemars(range(min = 0, max = 2147483647))]
+    y: u32,
+    #[serde(default)]
+    #[schemars(
+        description = "Send two consecutive taps; best effort, recognition by the app is not guaranteed"
+    )]
+    double_tap: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct LongPressRequest {
+    serial: String,
+    #[schemars(range(min = 0, max = 2147483647))]
+    x: u32,
+    #[schemars(range(min = 0, max = 2147483647))]
+    y: u32,
+    #[serde(default = "default_long_press_duration")]
+    #[schemars(range(min = 1, max = 10000))]
+    duration_ms: u32,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct SwipeRequest {
+    serial: String,
+    #[schemars(range(min = 0, max = 2147483647))]
+    start_x: u32,
+    #[schemars(range(min = 0, max = 2147483647))]
+    start_y: u32,
+    #[schemars(range(min = 0, max = 2147483647))]
+    end_x: u32,
+    #[schemars(range(min = 0, max = 2147483647))]
+    end_y: u32,
+    #[serde(default = "default_swipe_duration")]
+    #[schemars(range(min = 1, max = 10000))]
+    duration_ms: u32,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct InputTextRequest {
+    serial: String,
+    #[schemars(
+        description = "1-1024 printable ASCII characters; Unicode and control characters are not supported",
+        length(min = 1, max = 1024)
+    )]
+    text: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct PressKeyRequest {
+    serial: String,
+    keycode: adb::Keycode,
+}
+
+fn default_long_press_duration() -> u32 {
+    1000
+}
+
+fn default_swipe_duration() -> u32 {
+    300
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ListAppsRequest {
     #[schemars(description = "ADB serial number identifying the device to inspect")]
     serial: String,
@@ -48,6 +114,14 @@ struct InstallAppRequest {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct UninstallAppRequest {
     #[schemars(description = "ADB serial number identifying the device to uninstall from")]
+    serial: String,
+    #[schemars(description = "Android application package name (application ID)")]
+    package: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ClearAppDataRequest {
+    #[schemars(description = "ADB serial number identifying the device to clear")]
     serial: String,
     #[schemars(description = "Android application package name (application ID)")]
     package: String,
@@ -151,10 +225,85 @@ impl AndroidMcpServer {
             screen_recordings,
         }
     }
+
+    async fn perform_input(&self, serial: &str, action: adb::InputAction) -> CallToolResult {
+        match adb::send_input(&self.adb_executable, serial, action).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text("Input command completed")]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
 }
 
 #[tool_router(server_handler)]
 impl AndroidMcpServer {
+    #[tool(description = "Tap on the screen; optionally send a best-effort double tap")]
+    async fn adb_tap_on_screen(
+        &self,
+        Parameters(request): Parameters<TapRequest>,
+    ) -> CallToolResult {
+        self.perform_input(
+            &request.serial,
+            adb::InputAction::Tap {
+                x: request.x,
+                y: request.y,
+                double_tap: request.double_tap,
+            },
+        )
+        .await
+    }
+
+    #[tool(description = "Long press on the screen at the specified coordinates")]
+    async fn adb_long_press_on_screen(
+        &self,
+        Parameters(request): Parameters<LongPressRequest>,
+    ) -> CallToolResult {
+        self.perform_input(
+            &request.serial,
+            adb::InputAction::LongPress {
+                x: request.x,
+                y: request.y,
+                duration_ms: request.duration_ms,
+            },
+        )
+        .await
+    }
+
+    #[tool(description = "Swipe between two screen coordinates")]
+    async fn adb_swipe_on_screen(
+        &self,
+        Parameters(request): Parameters<SwipeRequest>,
+    ) -> CallToolResult {
+        self.perform_input(
+            &request.serial,
+            adb::InputAction::Swipe {
+                start_x: request.start_x,
+                start_y: request.start_y,
+                end_x: request.end_x,
+                end_y: request.end_y,
+                duration_ms: request.duration_ms,
+            },
+        )
+        .await
+    }
+
+    #[tool(description = "Enter printable ASCII text into the currently focused field")]
+    async fn adb_input_text(
+        &self,
+        Parameters(request): Parameters<InputTextRequest>,
+    ) -> CallToolResult {
+        self.perform_input(&request.serial, adb::InputAction::Text(request.text))
+            .await
+    }
+
+    #[tool(description = "Press a supported Android key")]
+    async fn adb_press_key(
+        &self,
+        Parameters(request): Parameters<PressKeyRequest>,
+    ) -> CallToolResult {
+        self.perform_input(&request.serial, adb::InputAction::Key(request.keycode))
+            .await
+    }
+
     #[tool(description = "Start recording the device screen to a video file")]
     async fn adb_start_screen_recording(
         &self,
@@ -403,6 +552,20 @@ impl AndroidMcpServer {
         match adb::uninstall_app(&self.adb_executable, &request.serial, &request.package).await {
             Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
                 "Uninstalled {} from {}",
+                request.package, request.serial
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Clear an app's data so it starts fresh")]
+    async fn adb_clear_app_data(
+        &self,
+        Parameters(request): Parameters<ClearAppDataRequest>,
+    ) -> CallToolResult {
+        match adb::clear_app_data(&self.adb_executable, &request.serial, &request.package).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Cleared data for {} on {}",
                 request.package, request.serial
             ))]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),

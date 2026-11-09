@@ -10,7 +10,7 @@ use support::adb::connect;
 use support::{Client, TIMEOUT, TestResult, disconnect};
 use tokio::{process::Child, time::timeout};
 
-const TOOL_NAMES: [&str; 16] = [
+const TOOL_NAMES: [&str; 22] = [
     "adb_list_devices",
     "adb_device_info",
     "adb_display_info",
@@ -27,6 +27,12 @@ const TOOL_NAMES: [&str; 16] = [
     "adb_get_foreground_app",
     "adb_install_app",
     "adb_uninstall_app",
+    "adb_clear_app_data",
+    "adb_tap_on_screen",
+    "adb_long_press_on_screen",
+    "adb_swipe_on_screen",
+    "adb_input_text",
+    "adb_press_key",
 ];
 
 async fn discover_tools() -> TestResult<(Client, Child, Vec<Tool>)> {
@@ -238,6 +244,158 @@ async fn exposes_adb_uninstall_app_schema() -> TestResult {
     );
     assert_eq!(schema["properties"]["serial"]["type"], "string");
     assert_eq!(schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_clear_app_data_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_clear_app_data").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial and package are required strings and the destructive effect is described.
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Clear an app's data so it starts fresh")
+    );
+    assert_eq!(
+        schema.get("required"),
+        Some(&serde_json::json!(["serial", "package"]))
+    );
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_tap_on_screen_schema() -> TestResult {
+    // Given
+    let (client, child, tool) = discover_tool("adb_tap_on_screen").await?;
+    // When
+    let schema = &tool.input_schema;
+    // Then
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Tap on the screen; optionally send a best-effort double tap")
+    );
+    assert_eq!(schema["required"], serde_json::json!(["serial", "x", "y"]));
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    for coordinate in ["x", "y"] {
+        assert_eq!(schema["properties"][coordinate]["type"], "integer");
+        assert_eq!(schema["properties"][coordinate]["minimum"], 0);
+        assert_eq!(schema["properties"][coordinate]["maximum"], 2147483647);
+    }
+    assert_eq!(schema["properties"]["double_tap"]["type"], "boolean");
+    assert_eq!(schema["properties"]["double_tap"]["default"], false);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_long_press_on_screen_schema() -> TestResult {
+    // Given
+    let (client, child, tool) = discover_tool("adb_long_press_on_screen").await?;
+    // When
+    let schema = &tool.input_schema;
+    // Then
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Long press on the screen at the specified coordinates")
+    );
+    assert_eq!(schema["required"], serde_json::json!(["serial", "x", "y"]));
+    assert_eq!(schema["properties"]["duration_ms"]["default"], 1000);
+    assert_eq!(schema["properties"]["duration_ms"]["minimum"], 1);
+    assert_eq!(schema["properties"]["duration_ms"]["maximum"], 10000);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_swipe_on_screen_schema() -> TestResult {
+    // Given
+    let (client, child, tool) = discover_tool("adb_swipe_on_screen").await?;
+    // When
+    let schema = &tool.input_schema;
+    // Then
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Swipe between two screen coordinates")
+    );
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["serial", "start_x", "start_y", "end_x", "end_y"])
+    );
+    for coordinate in ["start_x", "start_y", "end_x", "end_y"] {
+        assert_eq!(schema["properties"][coordinate]["type"], "integer");
+        assert_eq!(schema["properties"][coordinate]["minimum"], 0);
+        assert_eq!(schema["properties"][coordinate]["maximum"], 2147483647);
+    }
+    assert_eq!(schema["properties"]["duration_ms"]["default"], 300);
+    assert_eq!(schema["properties"]["duration_ms"]["minimum"], 1);
+    assert_eq!(schema["properties"]["duration_ms"]["maximum"], 10000);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_input_text_schema() -> TestResult {
+    // Given
+    let (client, child, tool) = discover_tool("adb_input_text").await?;
+    // When
+    let schema = &tool.input_schema;
+    // Then
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Enter printable ASCII text into the currently focused field")
+    );
+    assert_eq!(schema["required"], serde_json::json!(["serial", "text"]));
+    assert_eq!(schema["properties"]["text"]["type"], "string");
+    assert_eq!(schema["properties"]["text"]["minLength"], 1);
+    assert_eq!(schema["properties"]["text"]["maxLength"], 1024);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_press_key_schema() -> TestResult {
+    // Given
+    let (client, child, tool) = discover_tool("adb_press_key").await?;
+    // When
+    let schema = &tool.input_schema;
+    // Then
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Press a supported Android key")
+    );
+    assert_eq!(schema["required"], serde_json::json!(["serial", "keycode"]));
+    let reference = schema["properties"]["keycode"]["$ref"]
+        .as_str()
+        .ok_or("Missing keycode schema reference")?;
+    let document = serde_json::to_value(schema)?;
+    let keycode = document
+        .pointer(
+            reference
+                .strip_prefix('#')
+                .ok_or("Expected local schema reference")?,
+        )
+        .ok_or("Missing keycode definition")?;
+    assert_eq!(keycode["type"], "string");
+    assert_eq!(
+        keycode["enum"],
+        serde_json::json!([
+            "HOME",
+            "BACK",
+            "ENTER",
+            "TAB",
+            "DEL",
+            "FORWARD_DEL",
+            "DPAD_UP",
+            "DPAD_DOWN",
+            "DPAD_LEFT",
+            "DPAD_RIGHT",
+            "DPAD_CENTER",
+            "VOLUME_UP",
+            "VOLUME_DOWN"
+        ])
+    );
     disconnect(client, child).await
 }
 

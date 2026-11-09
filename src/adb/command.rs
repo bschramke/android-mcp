@@ -29,6 +29,8 @@ pub(super) struct CommandOptions {
 }
 
 impl CommandOptions {
+    pub(super) const LIMIT_16_KIB: usize = 16 * 1024;
+
     pub(super) fn new(deadline: Instant, stdout_limit: usize, stderr_limit: usize) -> Self {
         Self {
             deadline,
@@ -61,6 +63,10 @@ pub(super) struct CommandOutput {
     pub(super) stdout: Vec<u8>,
     pub(super) stderr: Vec<u8>,
     pub(super) stdout_truncated: bool,
+}
+
+pub(super) fn deadline_after(duration: Duration) -> Instant {
+    Instant::now() + duration
 }
 
 pub(super) async fn run_adb<I, S>(

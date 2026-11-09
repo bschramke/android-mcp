@@ -18,6 +18,9 @@ fn main() -> ExitCode {
         println!("Android Debug Bridge version 1.0.41");
         return ExitCode::SUCCESS;
     }
+    if let Some(trace) = env::var_os("ANDROID_MCP_TEST_INPUT_TRACE") {
+        writeln!(OpenOptions::new().create(true).append(true).open(trace).unwrap(), "{args:?}").unwrap();
+    }
     if args.len() == 8
         && args[0] == "-s"
         && args[2..5] == ["shell", "-tt", "screenrecord"]
@@ -576,6 +579,49 @@ fn main() -> ExitCode {
             Ok("uninstall_failure") => {
                 eprintln!("DELETE_FAILED_INTERNAL_ERROR");
                 return ExitCode::FAILURE;
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 6 && args[0] == "-s" && args[2..5] == ["shell", "pm", "clear"] {
+        if args[1] != "emulator-5554" || args[5] != "com.example.app" {
+            eprintln!("Unexpected clear-app-data serial or package argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("clear_app_data") => println!("Success"),
+            Ok("clear_app_data_failure") => {
+                eprintln!("clear data failed");
+                return ExitCode::FAILURE;
+            }
+            Ok("clear_app_data_unexpected") => println!("Failed to clear data"),
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 4 && args[0] == "-s" && args[2] == "shell" && args[3].starts_with("input ") {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected input serial");
+            return ExitCode::FAILURE;
+        }
+        let expected = env::var("ANDROID_MCP_TEST_INPUT_COMMAND").unwrap();
+        if args[3] != expected {
+            eprintln!("Unexpected input command: {:?}", args[3]);
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("input") => {}
+            Ok("input_failure") => {
+                eprintln!("input injection denied");
+                return ExitCode::FAILURE;
+            }
+            Ok("input_timeout") => loop { thread::park(); },
+            Ok("input_stdout_large") => {
+                let _ = io::stdout().write_all(&vec![b'x'; 16 * 1024 + 1]);
+            }
+            Ok("input_stderr_large") => {
+                let _ = io::stderr().write_all(&vec![b'x'; 16 * 1024 + 1]);
             }
             _ => return ExitCode::FAILURE,
         }

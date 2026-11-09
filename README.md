@@ -64,6 +64,14 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_get_foreground_app`** - Get the app currently in the foreground
 - **`adb_install_app`** - Install an APK on a selected device
 - **`adb_uninstall_app`** - Uninstall an app by package name
+- **`adb_clear_app_data`** - Clear an app's data so it starts fresh
+
+### Input & Navigation
+- **`adb_tap_on_screen`** - Tap at pixel coordinates, optionally twice
+- **`adb_long_press_on_screen`** - Hold a touch at pixel coordinates
+- **`adb_swipe_on_screen`** - Swipe between pixel coordinates
+- **`adb_input_text`** - Enter printable ASCII text into the focused field
+- **`adb_press_key`** - Press a supported Android key
 
 ### Logs
 - **`adb_logcat`** - Read a bounded snapshot of recent device logs with optional filters
@@ -79,6 +87,79 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_stop_screen_recording`** - Stop and save the active recording
 
 ## Tool details
+
+### Input behavior and limits
+
+All input tools require `serial` and change device/UI state. Coordinates are
+nonnegative integer display pixels up to 2147483647; they are not scaled or
+checked against the current display dimensions. Use `adb_display_info` to inspect
+the display when needed. Durations must be between 1 and 10000 milliseconds.
+Each operation shares one 15-second time budget and caps stdout and stderr at
+16 KiB each. Failures are MCP tool errors; partially completed gestures or text
+cannot be rolled back. The server never retries input automatically.
+Success means the input command completed, not that the app handled the gesture
+or produced a particular result. Verify effects using the app's visible state.
+
+### adb_tap_on_screen
+
+```json
+{"serial": "emulator-5554", "x": 240, "y": 480, "double_tap": true}
+```
+
+`x` and `y` are required. `double_tap` defaults to `false` and executes a single
+`input tap`. When `true`, a single remote shell invocation runs two identical
+`input tap` commands joined with `&&`, without an intentional pause. The second
+tap runs only if the first command succeeds. This reduces host/ADB round trips,
+but it is not an atomic gesture and does not guarantee double-tap recognition.
+App gesture rules, Android timing settings, and device load still apply.
+
+### adb_long_press_on_screen
+
+```json
+{"serial": "emulator-5554", "x": 240, "y": 480, "duration_ms": 1000}
+```
+
+`x` and `y` are required; `duration_ms` defaults to 1000. The tool uses
+`input swipe x y x y duration_ms`, keeping the touch at the same position.
+Whether a particular duration triggers a long press depends on the app/device.
+
+### adb_swipe_on_screen
+
+```json
+{"serial": "emulator-5554", "start_x": 240, "start_y": 800, "end_x": 240, "end_y": 200, "duration_ms": 300}
+```
+
+Both start and end coordinates are required; `duration_ms` defaults to 300.
+The tool executes `input swipe start_x start_y end_x end_y duration_ms`.
+
+### adb_input_text
+
+```json
+{"serial": "emulator-5554", "text": "Hello world"}
+```
+
+`text` must contain 1-1024 printable ASCII characters (U+0020-U+007E).
+Unicode, tabs, newlines, and other control characters are rejected. Text targets
+the currently focused input field; this tool does not focus a field or clear it.
+Spaces are encoded as Android's `%s` sequence. Shell metacharacters, including
+quotes, are safely quoted for the device shell. Literal `%s` is entered with
+separate commands to prevent Android interpreting it as a space. All commands
+are executed in order under one shared deadline, stopping on command failure.
+Text is not persisted or logged by the server, but is passed in process arguments
+and may contain sensitive data. Device key-character-map limitations still apply;
+a successful command does not guarantee the text was accepted by the app.
+
+### adb_press_key
+
+```json
+{"serial": "emulator-5554", "keycode": "BACK"}
+```
+
+`keycode` is a case-sensitive enum: `HOME`, `BACK`, `ENTER`, `TAB`, `DEL`,
+`FORWARD_DEL`, `DPAD_UP`, `DPAD_DOWN`, `DPAD_LEFT`, `DPAD_RIGHT`, `DPAD_CENTER`,
+`VOLUME_UP`, or `VOLUME_DOWN`. It maps to the corresponding Android `KEYCODE_*`
+constant and executes `input keyevent`. Numeric codes and arbitrary flags are
+not accepted.
 
 ### adb_list_devices
 
@@ -171,6 +252,20 @@ package name or bundle ID):
 The tool runs `adb -s <serial> uninstall <package>`. It validates the package
 name and returns an error if ADB cannot uninstall it, including when it is not
 installed or the device rejects removal. Uninstallation changes device state.
+
+### adb_clear_app_data
+
+Provide a device serial and Android application ID:
+
+```json
+{"serial": "emulator-5554", "package": "com.example.app"}
+```
+
+The tool runs `adb -s <serial> shell pm clear <package>` and succeeds only when
+Android reports `Success`. This deletes the app's local data and resets its
+state; it does not uninstall the app. ADB failures, invalid package names, an
+unsuccessful package-manager response, and the 30-second timeout produce tool
+errors. This operation is destructive and cannot be undone.
 
 ### adb_get_foreground_app
 
@@ -553,13 +648,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording \
+	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_clear_app_data,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording,adb_tap_on_screen,adb_long_press_on_screen,adb_swipe_on_screen,adb_input_text,adb_press_key \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_clear_app_data,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording,adb_tap_on_screen,adb_long_press_on_screen,adb_swipe_on_screen,adb_input_text,adb_press_key` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or
