@@ -97,6 +97,7 @@ fn parse_display_info(size: &str, density: &str, window: &str) -> DisplayInfo {
                 height: pixels_to_dp(resolution.height, density)?,
             })
         });
+    // Rotation is relative to the panel's physical orientation, even when wm size is overridden.
     let orientation = rotation_degrees.and_then(|rotation| {
         let natural_resolution = physical_resolution_px.or(base_resolution)?;
         Some(orientation_for(rotation, natural_resolution))

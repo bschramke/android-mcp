@@ -177,6 +177,7 @@ async fn capture(
                             )));
                         }
                         OverflowBehavior::TruncateStdout => {
+                            // Stop ADB at the cap instead of draining an unbounded log snapshot.
                             kill_for_truncation(child, operation).await?;
                             let status = child.wait().await?;
                             return Ok(CommandOutput {
@@ -232,6 +233,7 @@ pub(super) async fn read_capped(
     limit: usize,
 ) -> io::Result<(Vec<u8>, bool)> {
     let mut bytes = Vec::new();
+    // The extra byte distinguishes output exactly at the limit from truncated output.
     reader
         .take((limit + 1) as u64)
         .read_to_end(&mut bytes)

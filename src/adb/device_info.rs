@@ -59,6 +59,7 @@ fn parse_device_info(serial: &str, output: &str) -> io::Result<DeviceInfo> {
         if line.starts_with('[') && line.contains("]: [") {
             entries.push((index + 1, line.to_owned()));
         } else if let Some((_, entry)) = entries.last_mut() {
+            // Some getprop values span lines; attach them until the next property header.
             entry.push('\n');
             entry.push_str(line);
         } else {

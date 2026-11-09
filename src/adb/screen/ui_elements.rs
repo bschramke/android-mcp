@@ -11,6 +11,7 @@ use super::super::{
 
 const UI_HIERARCHY_LIMIT: usize = 1024 * 1024;
 const UI_HIERARCHY_STDERR_LIMIT: usize = 16 * 1024;
+// uiautomator dump requires a device-side file; the trap removes it even when the dump fails.
 const UI_HIERARCHY_SCRIPT: &str = concat!(
     "tmp=/sdcard/.android-mcp-ui-$$.xml; ",
     "trap 'rm -f \"$tmp\"' EXIT; ",

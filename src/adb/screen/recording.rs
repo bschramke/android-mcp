@@ -133,6 +133,7 @@ impl ScreenRecordingManager {
 
         if !session.stopped {
             if session.child.try_wait()?.is_none() {
+                // Send Ctrl-C through the PTY so screenrecord can finalize the MP4 before exit.
                 if let Err(error) = session.stdin.write_all(&[0x03]).await
                     && session.child.try_wait()?.is_none()
                 {

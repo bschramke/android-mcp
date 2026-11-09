@@ -41,6 +41,7 @@ pub(super) async fn resolve_pid(
     )
     .await?;
     if !output.status.success()
+    // pidof exits with code 1 and no output when the package has no running process.
         && !(output.status.code() == Some(1)
             && output.stdout.is_empty()
             && output.stderr.is_empty())

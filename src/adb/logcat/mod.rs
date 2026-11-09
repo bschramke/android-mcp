@@ -50,6 +50,7 @@ pub async fn logcat(
         package::validate(package)?;
     }
     let mut filters = filters::filter_arguments(pid, tags, priority)?;
+    // Package lookup and log retrieval share one budget rather than timing out independently.
     let deadline = Instant::now() + Duration::from_secs(5);
     if let Some(package) = package {
         let package_pid = package::resolve_pid(executable, serial, package, deadline).await?;
