@@ -10,7 +10,7 @@ use support::adb::connect;
 use support::{Client, TIMEOUT, TestResult, disconnect};
 use tokio::{process::Child, time::timeout};
 
-const TOOL_NAMES: [&str; 22] = [
+const TOOL_NAMES: [&str; 23] = [
     "adb_list_devices",
     "adb_device_info",
     "adb_display_info",
@@ -33,6 +33,7 @@ const TOOL_NAMES: [&str; 22] = [
     "adb_swipe_on_screen",
     "adb_input_text",
     "adb_press_key",
+    "adb_open_url",
 ];
 
 async fn discover_tools() -> TestResult<(Client, Child, Vec<Tool>)> {
@@ -266,6 +267,28 @@ async fn exposes_adb_clear_app_data_schema() -> TestResult {
     );
     assert_eq!(schema["properties"]["serial"]["type"], "string");
     assert_eq!(schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_open_url_schema() -> TestResult {
+    // Given: the MCP server is initialized.
+    let (client, child, tool) = discover_tool("adb_open_url").await?;
+
+    // When: its tool schema is inspected.
+    let schema = &tool.input_schema;
+
+    // Then: serial and an absolute HTTP(S) URL are required strings.
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Open an HTTP(S) URL with the Android default handler, usually the default browser")
+    );
+    assert_eq!(
+        schema.get("required"),
+        Some(&serde_json::json!(["serial", "url"]))
+    );
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["url"]["type"], "string");
     disconnect(client, child).await
 }
 

@@ -600,6 +600,26 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() == 4 && args[0] == "-s" && args[2] == "shell" && args[3].starts_with("am start ") {
+        if args[1] != "emulator-5554" {
+            eprintln!("Unexpected open-URL serial argument");
+            return ExitCode::FAILURE;
+        }
+        let expected = env::var("ANDROID_MCP_TEST_OPEN_URL_COMMAND").unwrap();
+        if args[3] != expected {
+            eprintln!("Unexpected open-URL command: {:?}", args[3]);
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("open_url") => println!("Started URL intent"),
+            Ok("open_url_failure") => {
+                eprintln!("No activity found to handle URL");
+                return ExitCode::FAILURE;
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args.len() == 4 && args[0] == "-s" && args[2] == "shell" && args[3].starts_with("input ") {
         if args[1] != "emulator-5554" {
             eprintln!("Unexpected input serial");

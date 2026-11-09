@@ -72,6 +72,7 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_swipe_on_screen`** - Swipe between pixel coordinates
 - **`adb_input_text`** - Enter printable ASCII text into the focused field
 - **`adb_press_key`** - Press a supported Android key
+- **`adb_open_url`** - Open an HTTP(S) URL with the Android default handler (usually the default browser)
 
 ### Logs
 - **`adb_logcat`** - Read a bounded snapshot of recent device logs with optional filters

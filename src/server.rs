@@ -128,6 +128,14 @@ struct ClearAppDataRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct OpenUrlRequest {
+    #[schemars(description = "ADB serial number identifying the device to open the URL on")]
+    serial: String,
+    #[schemars(description = "Absolute HTTP or HTTPS URL to open with Android's default handler")]
+    url: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct ScreenElementsRequest {
     #[schemars(description = "ADB serial number identifying the device to inspect")]
     serial: String,
@@ -567,6 +575,22 @@ impl AndroidMcpServer {
             Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
                 "Cleared data for {} on {}",
                 request.package, request.serial
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
+        description = "Open an HTTP(S) URL with the Android default handler, usually the default browser"
+    )]
+    async fn adb_open_url(
+        &self,
+        Parameters(request): Parameters<OpenUrlRequest>,
+    ) -> CallToolResult {
+        match adb::open_url(&self.adb_executable, &request.serial, &request.url).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Opened URL on {}: {}",
+                request.serial, request.url
             ))]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         }
