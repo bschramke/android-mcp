@@ -118,6 +118,119 @@ async fn empty_logcat_is_a_successful_empty_snapshot() -> TestResult {
     disconnect(client, child).await
 }
 
+async fn connect_logcat_file(mode: &str) -> TestResult<(Client, Child, tempfile::TempDir)> {
+    let directory = tempfile::tempdir()?;
+    let mut command = server_command();
+    command
+        .env("ANDROID_MCP_ADB", adb_fixture()?)
+        .env("ANDROID_MCP_TEST_ADB_MODE", mode);
+    let (client, child) = connect_command(command).await?;
+    Ok((client, child, directory))
+}
+
+#[tokio::test]
+async fn logcat_saves_to_file_and_returns_only_the_path() -> TestResult {
+    let (client, child, directory) = connect_logcat_file("logcat").await?;
+    let path = directory.path().join("snapshot.log");
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(serde_json::json!({
+            "serial": "emulator-5554",
+            "output_path": path,
+        }))),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(
+            &result.content[0]
+                .as_text()
+                .ok_or("Expected path JSON")?
+                .text
+        )?,
+        serde_json::json!({"path": path})
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path)?,
+        include_str!("fixtures/logcat/threadtime.txt")
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn file_output_uses_its_own_larger_bounded_limit() -> TestResult {
+    let (client, child, directory) = connect_logcat_file("logcat_file_large").await?;
+    let path = directory.path().join("large.log");
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(serde_json::json!({
+            "serial": "emulator-5554",
+            "output_path": path,
+        }))),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    let response: serde_json::Value = serde_json::from_str(
+        &result.content[0]
+            .as_text()
+            .ok_or("Expected path JSON")?
+            .text,
+    )?;
+    assert_eq!(response, serde_json::json!({"path": path}));
+    assert_eq!(std::fs::metadata(path)?.len(), 300 * 1024);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn file_output_rejects_overwrite_and_allows_explicit_replacement() -> TestResult {
+    let (client, child, directory) = connect_logcat_file("logcat").await?;
+    let path = directory.path().join("snapshot.log");
+    std::fs::write(&path, "keep existing")?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(serde_json::json!({
+            "serial": "emulator-5554",
+            "output_path": path,
+        }))),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(std::fs::read_to_string(&path)?, "keep existing");
+
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(serde_json::json!({
+            "serial": "emulator-5554",
+            "output_path": path,
+            "overwrite": true,
+        }))),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    assert_eq!(
+        std::fs::read_to_string(&path)?,
+        include_str!("fixtures/logcat/threadtime.txt")
+    );
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn oversized_file_output_fails_without_leaving_a_partial_file() -> TestResult {
+    let (client, child, directory) = connect_logcat_file("logcat_file_oversized").await?;
+    let path = directory.path().join("oversized.log");
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(logcat_request(serde_json::json!({
+            "serial": "emulator-5554",
+            "output_path": path,
+        }))),
+    )
+    .await??;
+    assert_eq!(result.is_error, Some(true));
+    assert!(!path.exists());
+    disconnect(client, child).await
+}
+
 #[tokio::test]
 async fn oversized_logcat_is_capped_and_server_remains_usable() -> TestResult {
     let (client, child) = connect("logcat_large").await?;

@@ -1,4 +1,10 @@
-use std::{ffi::OsString, io, path::Path, time::Duration};
+use std::{
+    ffi::OsString,
+    fs::OpenOptions,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use tokio::time::Instant;
 
@@ -13,7 +19,17 @@ use super::{
 };
 
 const OUTPUT_LIMIT: usize = 256 * 1024;
+const FILE_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 const STDERR_LIMIT: usize = 16 * 1024;
+
+pub struct LogcatOptions<'a> {
+    pub serial: &'a str,
+    pub max_lines: u32,
+    pub pid: Option<u32>,
+    pub tags: &'a [String],
+    pub priority: Option<LogPriority>,
+    pub package: Option<&'a str>,
+}
 
 pub async fn logcat(
     executable: &Path,
@@ -24,6 +40,85 @@ pub async fn logcat(
     priority: Option<LogPriority>,
     package: Option<&str>,
 ) -> io::Result<LogcatSnapshot> {
+    capture_logcat(
+        executable,
+        LogcatOptions {
+            serial,
+            max_lines,
+            pid,
+            tags,
+            priority,
+            package,
+        },
+        OUTPUT_LIMIT,
+        OverflowBehavior::TruncateStdout,
+    )
+    .await
+}
+
+pub async fn logcat_to_file(
+    executable: &Path,
+    options: LogcatOptions<'_>,
+    path: &Path,
+    overwrite: bool,
+) -> io::Result<PathBuf> {
+    validate_destination(path, overwrite)?;
+    let snapshot = capture_logcat(
+        executable,
+        options,
+        FILE_OUTPUT_LIMIT,
+        OverflowBehavior::Error,
+    )
+    .await?;
+    let mut file = if overwrite {
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?
+    } else {
+        OpenOptions::new().write(true).create_new(true).open(path)?
+    };
+    file.write_all(snapshot.output.as_bytes())?;
+    Ok(path.to_owned())
+}
+
+fn validate_destination(path: &Path, overwrite: bool) -> io::Result<()> {
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Logcat output path must be absolute",
+        ));
+    }
+    if !path.parent().is_some_and(Path::is_dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Logcat output directory does not exist",
+        ));
+    }
+    if !overwrite && path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("Logcat output file already exists: {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+async fn capture_logcat(
+    executable: &Path,
+    request: LogcatOptions<'_>,
+    stdout_limit: usize,
+    overflow_behavior: OverflowBehavior,
+) -> io::Result<LogcatSnapshot> {
+    let LogcatOptions {
+        serial,
+        max_lines,
+        pid,
+        tags,
+        priority,
+        package,
+    } = request;
     if serial.is_empty()
         || serial
             .chars()
@@ -78,8 +173,8 @@ pub async fn logcat(
         executable,
         arguments,
         "logcat",
-        CommandOptions::new(deadline, OUTPUT_LIMIT, STDERR_LIMIT)
-            .with_overflow_behavior(OverflowBehavior::TruncateStdout),
+        CommandOptions::new(deadline, stdout_limit, STDERR_LIMIT)
+            .with_overflow_behavior(overflow_behavior),
     )
     .await?;
     if output.stdout_truncated {

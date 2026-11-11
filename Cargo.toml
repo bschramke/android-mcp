@@ -11,6 +11,10 @@ rmcp = { version = "3.8.0", default-features = false, features = ["server", "mac
 roxmltree = "0.21"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "io-util", "signal"] }
 url = "2.5"
+protobuf = "3.7"
+
+[build-dependencies]
+protobuf-codegen = "3.7"
 
 [dev-dependencies]
 rmcp = { version = "3.8.0", default-features = false, features = ["client"] }

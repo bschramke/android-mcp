@@ -58,6 +58,9 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_display_info`** - Read display resolution, density, rotation, and orientation
 - **`adb_get_screen_orientation`** - Read the current screen orientation and rotation angle
 - **`adb_set_screen_orientation`** - Lock to portrait/landscape or release the lock with `auto`
+- **`adb_list_crashes`** - List DropBox crash, ANR, and tombstone metadata
+- **`adb_get_crash`** - Retrieve an individual crash report's structured protobuf content
+- **`adb_get_crash_file`** - Copy an original DropBox report file to the host
 - **`adb_health_check`** - Diagnose ADB, device connectivity, and read-only shell access
 
 ### App Management
@@ -103,6 +106,28 @@ manual rotation lock.
 command to simulate rotating the whole device. Right uses one command; left uses
 three. It is supported only by the Android Emulator, not physical devices, and a
 failed left rotation may have already applied one or more quarter-turns.
+
+### Crash reports
+
+`adb_list_crashes` reads DropBox metadata without reading report contents. By
+default it includes entries whose tags contain `crash`, `anr`, or `tombstone`;
+optional `date` (`YYYY-MM-DD`), `time` (`HH:MM:SS` or `HH:MM:SS.mmm`), and exact
+`tag` filters narrow the list. `limit` defaults to 100 and can be set from 1 to
+1000. Each result includes an opaque `id`, timestamp, tag, content type,
+compression flag, size, and file-availability flag.
+
+`adb_get_crash` takes a `serial` and an `id` from the list. It parses the
+DropBox protobuf and returns UTF-8 content or Base64 for binary data. Android's
+protobuf dump caps each entry at 256 KiB; `possibly_truncated` indicates when
+the returned entry reaches that cap. Use `adb_get_crash_file` when the original
+stored file is needed: provide `serial`, `id`, and an absolute host
+`output_path`. Existing files are preserved unless `overwrite: true` is set.
+That tool uses DropBox's `--file` listing and `adb pull`, and reports the saved
+path and byte size. Device permissions may prevent pulling protected entries.
+
+Crash reports can include app data, account details, or other sensitive
+information. Listing exposes metadata only; the two retrieval tools return
+report contents and should be invoked only for the intended device and report.
 
 ### Input behavior and limits
 
@@ -400,6 +425,22 @@ integer between 1 and 2000. The tool uses the resolved ADB executable to run
 `adb -s <serial> logcat -d -t <max_lines> -v threadtime`, without a shell or
 user-supplied flags. It is not a continuous stream and never clears the log buffer.
 
+To save the snapshot on the MCP host, provide an absolute `output_path`:
+
+```json
+{
+	"serial": "emulator-5554",
+	"output_path": "/absolute/path/to/device.log",
+	"overwrite": false
+}
+```
+
+When `output_path` is set, the response contains only `{"path": "..."}` rather
+than the log text. Existing files are preserved unless `overwrite: true` is set.
+File output has a separate 16-MiB limit; exceeding it returns an error and does
+not create a partial file. Without `output_path`, the snapshot is returned inline
+with the existing 256-KiB cap and `truncated` indicator.
+
 Optional filters can be used individually or combined:
 
 ```json
@@ -469,14 +510,14 @@ span multiple text lines. Devices that do not support native PID filtering retur
 a tool error rather than silently ignoring the filter. All existing timeout,
 output-size, and privacy protections apply unchanged.
 
-The JSON text result contains `serial`, `format` (`threadtime`), `output`, and
+The inline JSON text result contains `serial`, `format` (`threadtime`), `output`, and
 `truncated`. Empty logs are a successful result with `output: ""`. The collection
 and process wait, including package PID lookup when requested, share one
 five-second timeout; failure cleanup is bounded to one
 additional second. stdout and stderr are read concurrently and bounded while
 reading, not collected without limits and shortened afterward.
 
-Output is capped at 256 KiB. If exceeded, the ADB process is terminated and the
+Inline output is capped at 256 KiB. If exceeded, the ADB process is terminated and the
 captured prefix is returned with `truncated: true`; the final line may be partial.
 An incomplete UTF-8 character at the byte boundary is omitted. Invalid UTF-8
 elsewhere produces a tool error. stderr is capped at 16 KiB; exceeding that limit
@@ -485,8 +526,9 @@ while the MCP server remains available.
 
 Logcat can contain personal data, credentials, or tokens. Logs are returned to
 the calling client without automatic redaction and may be sent to its configured
-model provider. The server does not additionally log or persist the captured
-output. Review the requested device and tool approval before retrieving logs.
+model provider. The server does not persist captured output unless `output_path`
+is set; in that case, the file remains at the requested destination. Review the
+destination and tool approval before retrieving logs.
 
 #### adb_take_screenshot
 

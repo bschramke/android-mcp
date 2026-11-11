@@ -10,7 +10,7 @@ use support::adb::connect;
 use support::{Client, TIMEOUT, TestResult, disconnect};
 use tokio::{process::Child, time::timeout};
 
-const TOOL_NAMES: [&str; 26] = [
+const TOOL_NAMES: [&str; 29] = [
     "adb_list_devices",
     "adb_device_info",
     "adb_display_info",
@@ -19,6 +19,9 @@ const TOOL_NAMES: [&str; 26] = [
     "adb_emu_rotate",
     "adb_health_check",
     "adb_logcat",
+    "adb_list_crashes",
+    "adb_get_crash",
+    "adb_get_crash_file",
     "adb_take_screenshot",
     "adb_save_screenshot",
     "adb_list_elements_on_screen",
@@ -500,7 +503,7 @@ async fn exposes_adb_logcat_schema() -> TestResult {
 
     // Then: serial, limits, and optional filters match the public schema.
     assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
-    assert_eq!(properties.len(), 6);
+    assert_eq!(properties.len(), 8);
     assert_eq!(properties["serial"]["type"], "string");
     assert_eq!(properties["max_lines"]["default"], 200);
     assert_eq!(properties["max_lines"]["minimum"], 1);
@@ -511,6 +514,53 @@ async fn exposes_adb_logcat_schema() -> TestResult {
     assert_eq!(properties["tags"]["items"]["type"], "string");
     assert_eq!(properties["tags"]["maxItems"], 20);
     assert!(properties.contains_key("priority"));
+    assert_eq!(
+        properties["output_path"]["type"],
+        serde_json::json!(["string", "null"])
+    );
+    assert_eq!(properties["overwrite"]["type"], "boolean");
+    assert_eq!(properties["overwrite"]["default"], false);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_list_crashes_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_list_crashes").await?;
+    let schema = &tool.input_schema;
+    assert_eq!(schema.get("required"), Some(&serde_json::json!(["serial"])));
+    assert_eq!(schema["properties"]["serial"]["type"], "string");
+    assert_eq!(schema["properties"]["limit"]["default"], 100);
+    assert_eq!(schema["properties"]["limit"]["minimum"], 1);
+    assert_eq!(schema["properties"]["limit"]["maximum"], 1000);
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_get_crash_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_get_crash").await?;
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "id"]))
+    );
+    assert_eq!(tool.input_schema["properties"]["id"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_get_crash_file_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_get_crash_file").await?;
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "id", "output_path"]))
+    );
+    assert_eq!(
+        tool.input_schema["properties"]["output_path"]["type"],
+        "string"
+    );
+    assert_eq!(
+        tool.input_schema["properties"]["overwrite"]["default"],
+        false
+    );
     disconnect(client, child).await
 }
 

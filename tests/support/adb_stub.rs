@@ -12,6 +12,44 @@ const SCREENSHOT_PNG: &[u8] = &[
     239, 191, 175, 219, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
 const SCREEN_RECORDING_MP4: &[u8] = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2";
+const CRASH_FILE_BYTES: &[u8] = b"\x00synthetic crash bytes\xff";
+
+fn append_varint(output: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        output.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    output.push(value as u8);
+}
+
+fn crash_proto(mode: &str) -> Vec<u8> {
+    let data: &[u8] = if mode == "crash_proto_binary" {
+        CRASH_FILE_BYTES
+    } else {
+        b"synthetic crash report body"
+    };
+    let mut entry = Vec::new();
+    append_varint(&mut entry, 0x08);
+    append_varint(&mut entry, 1);
+    append_varint(&mut entry, 0x12);
+    append_varint(&mut entry, data.len() as u64);
+    entry.extend_from_slice(data);
+
+    let mut proto = Vec::new();
+    append_varint(&mut proto, 0x0a);
+    append_varint(&mut proto, entry.len() as u64);
+    proto.extend_from_slice(&entry);
+    proto
+}
+
+fn crash_listing(include_files: bool) -> &'static str {
+    if include_files {
+        "Drop box contents: 4 entries\n2026-01-02 03:04:05.006 data_app_crash (compressed text, 42 bytes)\n /data/system/dropbox/data_app_crash@1767323045006.txt.gz\n2026-01-02 03:05:06.007 system_server_anr (text, 24 bytes)\n /data/system/dropbox/system_server_anr@1767323106007.txt\n2026-01-02 03:06:07.008 SYSTEM_TOMBSTONE (compressed data, 104 bytes)\n /data/system/dropbox/SYSTEM_TOMBSTONE@1767323167008.dat.gz\n2026-01-02 03:07:08.009 system_app_wtf (text, 12 bytes)\n /data/system/dropbox/system_app_wtf@1767323228009.txt\n"
+    } else {
+        "Drop box contents: 4 entries\nMax entries: 1000\n\n2026-01-02 03:04:05.006 data_app_crash (compressed text, 42 bytes)\n2026-01-02 03:05:06.007 system_server_anr (text, 24 bytes)\n2026-01-02 03:06:07.008 SYSTEM_TOMBSTONE (compressed data, 104 bytes)\n2026-01-02 03:07:08.009 system_app_wtf (text, 12 bytes)\n"
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["version"] {
@@ -67,17 +105,85 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.len() == 5 && args[0] == "-s" && args[2] == "pull" {
-        if args[1] != "emulator-5554" || !args[3].starts_with("/sdcard/.android-mcp-recording-") {
+        if args[1] == "emulator-5554" && args[3].starts_with("/sdcard/.android-mcp-recording-") {
+            std::fs::write(&args[4], SCREEN_RECORDING_MP4).unwrap();
+            let trace = env::var_os("ANDROID_MCP_TEST_RECORDING_TRACE").unwrap();
+            writeln!(
+                OpenOptions::new().append(true).open(&trace).unwrap(),
+                "pulled"
+            )
+            .unwrap();
+            return ExitCode::SUCCESS;
+        }
+        if args[1] == "emulator-5554"
+            && args[3].starts_with("/data/system/dropbox/")
+            && env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() == Ok("crash_all")
+        {
+            std::fs::write(&args[4], CRASH_FILE_BYTES).unwrap();
+            return ExitCode::SUCCESS;
+        }
+        {
             eprintln!("Unexpected screen-recording pull arguments");
             return ExitCode::FAILURE;
         }
-        std::fs::write(&args[4], SCREEN_RECORDING_MP4).unwrap();
-        let trace = env::var_os("ANDROID_MCP_TEST_RECORDING_TRACE").unwrap();
-        writeln!(
-            OpenOptions::new().append(true).open(&trace).unwrap(),
-            "pulled"
-        )
-        .unwrap();
+    }
+    if args.len() == 9
+        && args[0] == "-s"
+        && args[1] == "emulator-5554"
+        && args[2..6] == ["exec-out", "dumpsys", "dropbox", "--proto"]
+    {
+        if args[6..] != ["2026-01-02", "03:04:05.006", "data_app_crash"]
+            || env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() != Ok("crash_all")
+        {
+            eprintln!("Unexpected crash protobuf arguments");
+            return ExitCode::FAILURE;
+        }
+        if env::var_os("ANDROID_MCP_TEST_CRASH_PROTO_TRACE").is_some() {
+            let trace = env::var_os("ANDROID_MCP_TEST_CRASH_PROTO_TRACE").unwrap();
+            writeln!(OpenOptions::new().create(true).append(true).open(trace).unwrap(), "proto")
+                .unwrap();
+        }
+        let mode = env::var("ANDROID_MCP_TEST_CRASH_CONTENT").unwrap_or_default();
+        io::stdout().write_all(&crash_proto(&mode)).unwrap();
+        return ExitCode::SUCCESS;
+    }
+    if args.len() >= 5
+        && args[0] == "-s"
+        && args[1] == "emulator-5554"
+        && args[2..5] == ["shell", "dumpsys", "dropbox"]
+    {
+        let mode = env::var("ANDROID_MCP_TEST_ADB_MODE").unwrap_or_default();
+        if mode != "crash_all" {
+            eprintln!("Unexpected DropBox mode: {mode}");
+            return ExitCode::FAILURE;
+        }
+        let filters = if args.get(5) == Some(&"--file".to_owned()) {
+            if args.get(6..)
+                != Some(&[
+                    "2026-01-02".to_owned(),
+                    "03:04:05.006".to_owned(),
+                    "data_app_crash".to_owned(),
+                ][..])
+            {
+                eprintln!("Unexpected DropBox file filters");
+                return ExitCode::FAILURE;
+            }
+            true
+        } else {
+            if args.get(5..)
+                != Some(&[
+                    "2026-01-02".to_owned(),
+                    "03:04:05.006".to_owned(),
+                    "data_app_crash".to_owned(),
+                ][..])
+                && args.len() != 5
+            {
+                eprintln!("Unexpected DropBox metadata filters");
+                return ExitCode::FAILURE;
+            }
+            false
+        };
+        print!("{}", crash_listing(filters));
         return ExitCode::SUCCESS;
     }
     if args.len() == 6 && args[0] == "-s" && args[2..5] == ["shell", "rm", "-f"] {
@@ -356,6 +462,12 @@ fn main() -> ExitCode {
             }
             "logcat_large_exit" => {
                 let _ = io::stdout().write_all(&vec![b'x'; 256 * 1024 + 4096]);
+            }
+            "logcat_file_large" => {
+                let _ = io::stdout().write_all(&vec![b'x'; 300 * 1024]);
+            }
+            "logcat_file_oversized" => {
+                let _ = io::stdout().write_all(&vec![b'x'; 16 * 1024 * 1024 + 1]);
             }
             "logcat_stderr_large" => {
                 let _ = io::stderr().write_all(&vec![b'e'; 16 * 1024 + 4096]);

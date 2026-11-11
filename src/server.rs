@@ -227,10 +227,58 @@ struct LogcatRequest {
         description = "Minimum severity; warn includes warn, error, and fatal; without a priority, selected tags include all levels"
     )]
     priority: Option<adb::LogPriority>,
+    #[schemars(description = "Optional absolute host path to save the logcat snapshot")]
+    output_path: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Replace an existing output file; defaults to false")]
+    overwrite: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct CrashListRequest {
+    #[schemars(description = "ADB serial number identifying the device to inspect")]
+    serial: String,
+    #[schemars(description = "Optional DropBox date filter in YYYY-MM-DD format")]
+    date: Option<String>,
+    #[schemars(description = "Optional DropBox time filter in HH:MM:SS[.mmm] format")]
+    time: Option<String>,
+    #[schemars(description = "Optional exact DropBox tag")]
+    tag: Option<String>,
+    #[serde(default = "default_crash_limit")]
+    #[schemars(
+        description = "Maximum number of crash entries; defaults to 100",
+        range(min = 1, max = 1000)
+    )]
+    limit: u32,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct GetCrashRequest {
+    #[schemars(description = "ADB serial number identifying the device")]
+    serial: String,
+    #[schemars(description = "Opaque crash ID returned by adb_list_crashes")]
+    id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct GetCrashFileRequest {
+    #[schemars(description = "ADB serial number identifying the device")]
+    serial: String,
+    #[schemars(description = "Opaque crash ID returned by adb_list_crashes")]
+    id: String,
+    #[schemars(description = "Absolute destination path on the MCP server host")]
+    output_path: String,
+    #[serde(default)]
+    #[schemars(description = "Replace an existing destination file; defaults to false")]
+    overwrite: bool,
 }
 
 fn default_logcat_lines() -> u32 {
     200
+}
+
+fn default_crash_limit() -> u32 {
+    100
 }
 
 #[derive(Clone)]
@@ -451,9 +499,36 @@ impl AndroidMcpServer {
     }
 
     #[tool(
-        description = "Read a bounded snapshot of recent device logcat output without clearing the log buffer; logs may contain sensitive data"
+        description = "Read a bounded logcat snapshot or save it to a file without clearing the log buffer; logs may contain sensitive data"
     )]
     async fn adb_logcat(&self, Parameters(request): Parameters<LogcatRequest>) -> CallToolResult {
+        if let Some(output_path) = request.output_path.as_deref() {
+            return match adb::logcat_to_file(
+                &self.adb_executable,
+                adb::LogcatOptions {
+                    serial: &request.serial,
+                    max_lines: request.max_lines,
+                    pid: request.pid,
+                    tags: &request.tags,
+                    priority: request.priority,
+                    package: request.package.as_deref(),
+                },
+                std::path::Path::new(output_path),
+                request.overwrite,
+            )
+            .await
+            {
+                Ok(path) => CallToolResult::success(vec![ContentBlock::text(
+                    serde_json::json!({"path": path.to_string_lossy()}).to_string(),
+                )]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+            };
+        }
+        if request.overwrite {
+            return CallToolResult::error(vec![ContentBlock::text(
+                "overwrite requires output_path".to_owned(),
+            )]);
+        }
         match adb::logcat(
             &self.adb_executable,
             &request.serial,
@@ -469,6 +544,77 @@ impl AndroidMcpServer {
                 Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
                 Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
                     "Cannot serialize ADB logcat: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
+        description = "List DropBox crash, ANR, and tombstone reports without reading their contents"
+    )]
+    async fn adb_list_crashes(
+        &self,
+        Parameters(request): Parameters<CrashListRequest>,
+    ) -> CallToolResult {
+        match adb::list_crashes(
+            &self.adb_executable,
+            &request.serial,
+            request.date.as_deref(),
+            request.time.as_deref(),
+            request.tag.as_deref(),
+            request.limit,
+        )
+        .await
+        {
+            Ok(reports) => match serde_json::to_string(&reports) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize crash report list: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
+        description = "Get a crash report's structured DropBox protobuf content; report contents may be sensitive"
+    )]
+    async fn adb_get_crash(
+        &self,
+        Parameters(request): Parameters<GetCrashRequest>,
+    ) -> CallToolResult {
+        match adb::get_crash(&self.adb_executable, &request.serial, &request.id).await {
+            Ok(crash) => match serde_json::to_string(&crash) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize crash report: {error}"
+                ))]),
+            },
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(
+        description = "Copy a crash report's original DropBox file to the host; contents may be sensitive"
+    )]
+    async fn adb_get_crash_file(
+        &self,
+        Parameters(request): Parameters<GetCrashFileRequest>,
+    ) -> CallToolResult {
+        match adb::get_crash_file(
+            &self.adb_executable,
+            &request.serial,
+            &request.id,
+            std::path::Path::new(&request.output_path),
+            request.overwrite,
+        )
+        .await
+        {
+            Ok(result) => match serde_json::to_string(&result) {
+                Ok(json) => CallToolResult::success(vec![ContentBlock::text(json)]),
+                Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Cannot serialize crash file result: {error}"
                 ))]),
             },
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
