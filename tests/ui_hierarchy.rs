@@ -5,8 +5,8 @@ mod support;
 use std::time::Duration;
 
 use rmcp::model::CallToolRequestParams;
-use support::adb::connect;
-use support::{TIMEOUT, TestResult, disconnect};
+use support::adb::{adb_fixture, connect};
+use support::{TIMEOUT, TestResult, connect_command, disconnect, server_command};
 use tokio::time::timeout;
 
 fn screen_elements_request(serial: &str) -> CallToolRequestParams {
@@ -29,6 +29,37 @@ fn hierarchy_node_count(nodes: &serde_json::Value) -> usize {
         .map(|node| 1 + hierarchy_node_count(&node["children"]))
         .sum()
 }
+
+#[tokio::test]
+async fn serializes_concurrent_hierarchy_captures_for_the_same_device() -> TestResult {
+    let temp_dir = tempfile::tempdir()?;
+    let lock_path = temp_dir.path().join("ui-hierarchy.lock");
+    let mut command = server_command();
+    command
+        .env("ANDROID_MCP_ADB", adb_fixture()?)
+        .env("ANDROID_MCP_TEST_ADB_MODE", "ui_elements_concurrent")
+        .env("ANDROID_MCP_TEST_UI_HIERARCHY_LOCK", &lock_path);
+    let (client, child) = connect_command(command).await?;
+
+    let (elements, hierarchy) = tokio::join!(
+        timeout(
+            TIMEOUT,
+            client.call_tool(screen_elements_request("emulator-5554"))
+        ),
+        timeout(
+            TIMEOUT,
+            client.call_tool(screen_hierarchy_request("emulator-5554"))
+        )
+    );
+    let elements = elements??;
+    let hierarchy = hierarchy??;
+
+    assert_ne!(elements.is_error, Some(true));
+    assert_ne!(hierarchy.is_error, Some(true));
+    assert!(!lock_path.exists());
+    disconnect(client, child).await
+}
+
 #[tokio::test]
 async fn list_elements_on_screen_parses_both_device_fixtures() -> TestResult {
     let (client, child) = connect("ui_elements").await?;

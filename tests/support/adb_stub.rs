@@ -268,6 +268,26 @@ fn main() -> ExitCode {
         }
         match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
             Ok("ui_elements") => print!("{hierarchy}"),
+            Ok("ui_elements_concurrent") => {
+                let lock_path = std::path::PathBuf::from(
+                    env::var_os("ANDROID_MCP_TEST_UI_HIERARCHY_LOCK").unwrap(),
+                );
+                let lock = match OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                {
+                    Ok(lock) => lock,
+                    Err(error) => {
+                        eprintln!("Concurrent UI hierarchy capture detected: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                thread::sleep(std::time::Duration::from_millis(250));
+                drop(lock);
+                fs::remove_file(lock_path).unwrap();
+                print!("{hierarchy}");
+            }
             Ok("ui_elements_malformed") => print!("not xml"),
             Ok("ui_elements_failure") => {
                 eprintln!("uiautomator unavailable");

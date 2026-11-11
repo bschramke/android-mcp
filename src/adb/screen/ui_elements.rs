@@ -1,8 +1,17 @@
-use std::{io, path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    io,
+    path::Path,
+    sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
+    time::Duration,
+};
 
 use roxmltree::{Document, Node};
 use serde::Serialize;
-use tokio::time::Instant;
+use tokio::{
+    sync::Mutex as AsyncMutex,
+    time::{Instant, timeout_at},
+};
 
 use super::super::{
     command::{CommandOptions, ensure_success, run_shell},
@@ -11,6 +20,10 @@ use super::super::{
 
 const UI_HIERARCHY_LIMIT: usize = 1024 * 1024;
 const UI_HIERARCHY_STDERR_LIMIT: usize = 16 * 1024;
+const UI_HIERARCHY_TIMEOUT: Duration = Duration::from_secs(10);
+const UI_HIERARCHY_TIMEOUT_MESSAGE: &str = "ADB UI hierarchy capture timed out after 10 seconds";
+static UI_HIERARCHY_LOCKS: OnceLock<StdMutex<HashMap<String, Weak<AsyncMutex<()>>>>> =
+    OnceLock::new();
 // uiautomator dump requires a device-side file; the trap removes it even when the dump fails.
 const UI_HIERARCHY_SCRIPT: &str = concat!(
     "tmp=/sdcard/.android-mcp-ui-$$.xml; ",
@@ -91,18 +104,19 @@ pub async fn get_screen_hierarchy(executable: &Path, serial: &str) -> io::Result
 
 async fn capture_hierarchy(executable: &Path, serial: &str) -> io::Result<String> {
     validate_serial(serial)?;
+    let deadline = Instant::now() + UI_HIERARCHY_TIMEOUT;
+    let lock = hierarchy_capture_lock(serial)?;
+    let _guard = timeout_at(deadline, lock.lock())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, UI_HIERARCHY_TIMEOUT_MESSAGE))?;
     let output = run_shell(
         executable,
         serial,
         [UI_HIERARCHY_SCRIPT],
         "UI hierarchy capture",
-        CommandOptions::new(
-            Instant::now() + Duration::from_secs(10),
-            UI_HIERARCHY_LIMIT,
-            UI_HIERARCHY_STDERR_LIMIT,
-        )
-        .with_timeout_message("ADB UI hierarchy capture timed out after 10 seconds")
-        .with_stdout_label("output"),
+        CommandOptions::new(deadline, UI_HIERARCHY_LIMIT, UI_HIERARCHY_STDERR_LIMIT)
+            .with_timeout_message(UI_HIERARCHY_TIMEOUT_MESSAGE)
+            .with_stdout_label("output"),
     )
     .await?;
     ensure_success(&output, "UI hierarchy capture")?;
@@ -113,6 +127,21 @@ async fn capture_hierarchy(executable: &Path, serial: &str) -> io::Result<String
         )
     })?;
     Ok(xml.to_owned())
+}
+
+fn hierarchy_capture_lock(serial: &str) -> io::Result<Arc<AsyncMutex<()>>> {
+    let locks = UI_HIERARCHY_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut locks = locks
+        .lock()
+        .map_err(|_| io::Error::other("UI hierarchy capture lock map is poisoned"))?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(serial).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+
+    let lock = Arc::new(AsyncMutex::new(()));
+    locks.insert(serial.to_owned(), Arc::downgrade(&lock));
+    Ok(lock)
 }
 
 fn parse_hierarchy(serial: &str, xml: &str) -> io::Result<UiElementList> {
