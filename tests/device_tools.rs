@@ -1,9 +1,7 @@
-#![cfg(unix)]
-
 mod support;
 
 use rmcp::{model::CallToolRequestParams, service::ServiceError};
-use support::adb::{adb_fixture, connect};
+use support::adb::{connect, copy_adb_fixture};
 use support::{TIMEOUT, TestResult, connect_command, disconnect, server_command};
 use tokio::time::timeout;
 
@@ -310,7 +308,7 @@ async fn device_listing_reuses_resolved_sdk_executable() -> TestResult {
     let directory = tempfile::tempdir()?;
     let tools = directory.path().join("platform-tools");
     std::fs::create_dir(&tools)?;
-    std::os::unix::fs::symlink(adb_fixture()?, tools.join("adb"))?;
+    copy_adb_fixture(&tools)?;
     let mut command = server_command();
     command
         .env("ANDROID_SDK_ROOT", directory.path())
@@ -334,8 +332,7 @@ async fn device_listing_reuses_resolved_sdk_executable() -> TestResult {
 #[tokio::test]
 async fn adb_removed_after_startup_is_a_tool_error() -> TestResult {
     let directory = tempfile::tempdir()?;
-    let executable = directory.path().join("adb");
-    std::os::unix::fs::symlink(adb_fixture()?, &executable)?;
+    let executable = copy_adb_fixture(directory.path())?;
     let mut command = server_command();
     command
         .env("ANDROID_MCP_ADB", &executable)

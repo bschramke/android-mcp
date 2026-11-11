@@ -53,8 +53,25 @@ fn crash_listing(include_files: bool) -> &'static str {
 fn main() -> ExitCode {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["version"] {
-        println!("Android Debug Bridge version 1.0.41");
-        return ExitCode::SUCCESS;
+        let startup_mode = env::current_exe().ok().and_then(|executable| {
+            let mut sidecar = executable.into_os_string();
+            sidecar.push(".mode");
+            fs::read_to_string(sidecar).ok()
+        });
+        match startup_mode.as_deref().map(str::trim) {
+            Some("version_failure") => {
+                eprintln!("Synthetic ADB version failure");
+                return ExitCode::FAILURE;
+            }
+            Some("version_large") => {
+                let _ = io::stdout().write_all(&vec![b'x'; 4 * 1024 + 1]);
+                return ExitCode::SUCCESS;
+            }
+            _ => {
+                println!("Android Debug Bridge version 1.0.41");
+                return ExitCode::SUCCESS;
+            }
+        }
     }
     if let Some(trace) = env::var_os("ANDROID_MCP_TEST_INPUT_TRACE") {
         writeln!(OpenOptions::new().create(true).append(true).open(trace).unwrap(), "{args:?}").unwrap();

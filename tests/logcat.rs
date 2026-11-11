@@ -1,5 +1,3 @@
-#![cfg(unix)]
-
 mod support;
 
 use rmcp::{model::CallToolRequestParams, service::ServiceError};

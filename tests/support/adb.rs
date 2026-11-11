@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::OnceLock};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use super::{Client, TestResult, connect_command, server_command};
 use tokio::process::Child;
@@ -7,7 +11,9 @@ pub fn adb_fixture() -> TestResult<PathBuf> {
     static FIXTURE: OnceLock<Result<(tempfile::TempDir, PathBuf), String>> = OnceLock::new();
     let fixture = FIXTURE.get_or_init(|| {
         let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
-        let executable = directory.path().join("adb-stub");
+        let executable = directory
+            .path()
+            .join(format!("adb-stub{}", std::env::consts::EXE_SUFFIX));
         let output =
             std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
                 .arg("--edition=2024")
@@ -28,6 +34,24 @@ pub fn adb_fixture() -> TestResult<PathBuf> {
         Ok((_, executable)) => Ok(executable.clone()),
         Err(error) => Err(std::io::Error::other(error.clone()).into()),
     }
+}
+
+pub fn adb_executable_name() -> &'static str {
+    if cfg!(windows) { "adb.exe" } else { "adb" }
+}
+
+pub fn copy_adb_fixture(directory: &Path) -> TestResult<PathBuf> {
+    fs::create_dir_all(directory)?;
+    let executable = directory.join(adb_executable_name());
+    fs::copy(adb_fixture()?, &executable)?;
+    Ok(executable)
+}
+
+pub fn set_startup_mode(executable: &Path, mode: &str) -> TestResult {
+    let mut sidecar = executable.as_os_str().to_os_string();
+    sidecar.push(".mode");
+    fs::write(PathBuf::from(sidecar), mode)?;
+    Ok(())
 }
 
 #[allow(dead_code)]
