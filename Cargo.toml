@@ -1,8 +1,11 @@
 [package]
 name = "android-mcp"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 edition = "2024"
 rust-version = "1.89"
+description = "Local stdio MCP server for Android device automation through ADB"
+license = "MIT"
+repository = "https://github.com/bschramke/android-mcp"
 
 [dependencies]
 base64 = "0.22"

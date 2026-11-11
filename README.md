@@ -4,8 +4,20 @@ A local Rust MCP server for controlling Android devices through ADB. MCP clients
 
 ## Requirements
 
-- Rust toolchain for edition 2024
-- Android Debug Bridge and an authorized device or emulator
+- Prebuilt releases: ADB installed and an authorized device or emulator
+- Source builds: Rust 1.89 or newer
+
+## Download a release
+
+Download the archive for your platform from [GitHub Releases](https://github.com/bschramke/android-mcp/releases), verify `SHA256SUMS.txt`, and extract it:
+
+| Platform | Artifact |
+| --- | --- |
+| Linux x86_64 (GNU, built on Ubuntu 22.04) | `android-mcp-v1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS ARM64 | `android-mcp-v1.0.0-rc.1-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `android-mcp-v1.0.0-rc.1-x86_64-pc-windows-msvc.zip` |
+
+Intel macOS and Linux ARM64 are not supported in v1. ADB is a separate prerequisite and is never bundled. Set `ANDROID_MCP_ADB` if the client cannot find the installed executable through `PATH` or the Android SDK environment variables.
 
 ## Build
 
