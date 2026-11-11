@@ -128,6 +128,14 @@ struct ClearAppDataRequest {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct AppProcessRequest {
+    #[schemars(description = "ADB serial number identifying the device to control")]
+    serial: String,
+    #[schemars(description = "Android application ID (package name)")]
+    package: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct OpenUrlRequest {
     #[schemars(description = "ADB serial number identifying the device to open the URL on")]
     serial: String,
@@ -794,6 +802,34 @@ impl AndroidMcpServer {
         match adb::clear_app_data(&self.adb_executable, &request.serial, &request.package).await {
             Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
                 "Cleared data for {} on {}",
+                request.package, request.serial
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Launch an app using its applicationId")]
+    async fn adb_launch_app(
+        &self,
+        Parameters(request): Parameters<AppProcessRequest>,
+    ) -> CallToolResult {
+        match adb::launch_app(&self.adb_executable, &request.serial, &request.package).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Launched {} on {}",
+                request.package, request.serial
+            ))]),
+            Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        }
+    }
+
+    #[tool(description = "Stop and terminate a running app")]
+    async fn adb_terminate_app(
+        &self,
+        Parameters(request): Parameters<AppProcessRequest>,
+    ) -> CallToolResult {
+        match adb::terminate_app(&self.adb_executable, &request.serial, &request.package).await {
+            Ok(()) => CallToolResult::success(vec![ContentBlock::text(format!(
+                "Force-stopped {} on {}",
                 request.package, request.serial
             ))]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),

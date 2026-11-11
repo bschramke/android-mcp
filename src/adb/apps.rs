@@ -13,6 +13,8 @@ const APPS_STDERR_LIMIT: usize = 16 * 1024;
 const APP_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 const APP_UNINSTALL_TIMEOUT: Duration = Duration::from_secs(30);
 const APP_CLEAR_DATA_TIMEOUT: Duration = Duration::from_secs(30);
+const APP_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
+const APP_TERMINATE_TIMEOUT: Duration = Duration::from_secs(30);
 const APP_ACTION_STDOUT_LIMIT: usize = 64 * 1024;
 const APP_ACTION_STDERR_LIMIT: usize = 16 * 1024;
 
@@ -110,6 +112,56 @@ pub async fn clear_app_data(executable: &Path, serial: &str, package: &str) -> i
         )));
     }
     Ok(())
+}
+
+pub async fn launch_app(executable: &Path, serial: &str, package: &str) -> io::Result<()> {
+    validate_serial(serial)?;
+    validate_package(package)?;
+
+    let output = run_shell(
+        executable,
+        serial,
+        [
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "-p",
+            package,
+        ],
+        "app launch",
+        CommandOptions::new(
+            Instant::now() + APP_LAUNCH_TIMEOUT,
+            APP_ACTION_STDOUT_LIMIT,
+            APP_ACTION_STDERR_LIMIT,
+        )
+        .with_timeout_message("ADB app launch timed out after 30 seconds"),
+    )
+    .await?;
+    ensure_success(&output, "app launch")
+}
+
+pub async fn terminate_app(executable: &Path, serial: &str, package: &str) -> io::Result<()> {
+    validate_serial(serial)?;
+    validate_package(package)?;
+
+    let output = run_shell(
+        executable,
+        serial,
+        ["am", "force-stop", package],
+        "app termination",
+        CommandOptions::new(
+            Instant::now() + APP_TERMINATE_TIMEOUT,
+            APP_ACTION_STDOUT_LIMIT,
+            APP_ACTION_STDERR_LIMIT,
+        )
+        .with_timeout_message("ADB app termination timed out after 30 seconds"),
+    )
+    .await?;
+    ensure_success(&output, "app termination")
 }
 
 fn validate_apk_path(path: &Path) -> io::Result<()> {

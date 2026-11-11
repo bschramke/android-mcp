@@ -14,7 +14,7 @@ mod model;
 mod open_url;
 mod screen;
 pub use app_info::app_info;
-pub use apps::{clear_app_data, install_app, list_apps, uninstall_app};
+pub use apps::{clear_app_data, install_app, launch_app, list_apps, terminate_app, uninstall_app};
 pub use device_info::device_info;
 pub use devices::list_devices;
 pub use dropbox::{get_crash, get_crash_file, list_crashes};

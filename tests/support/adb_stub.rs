@@ -818,6 +818,52 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if args.len() == 12
+        && args[0] == "-s"
+        && args[2..11]
+            == [
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+            ]
+    {
+        if args[1] != "emulator-5554" || args[11] != "com.example.app" {
+            eprintln!("Unexpected app-launch serial or package argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("launch_app") => {
+                println!("Status: ok\nActivity: com.example.app/.MainActivity\nComplete")
+            }
+            Ok("launch_app_failure") => {
+                eprintln!("Activity not found");
+                return ExitCode::FAILURE;
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
+    if args.len() == 6 && args[0] == "-s" && args[2..5] == ["shell", "am", "force-stop"] {
+        if args[1] != "emulator-5554" || args[5] != "com.example.app" {
+            eprintln!("Unexpected app-termination serial or package argument");
+            return ExitCode::FAILURE;
+        }
+        match env::var("ANDROID_MCP_TEST_ADB_MODE").as_deref() {
+            Ok("terminate_app") => {}
+            Ok("terminate_app_failure") => {
+                eprintln!("Unable to force-stop app");
+                return ExitCode::FAILURE;
+            }
+            _ => return ExitCode::FAILURE,
+        }
+        return ExitCode::SUCCESS;
+    }
     if args.len() == 4 && args[0] == "-s" && args[2] == "shell" && args[3].starts_with("am start ") {
         if args[1] != "emulator-5554" {
             eprintln!("Unexpected open-URL serial argument");

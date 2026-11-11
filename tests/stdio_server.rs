@@ -10,7 +10,7 @@ use support::adb::connect;
 use support::{Client, TIMEOUT, TestResult, disconnect};
 use tokio::{process::Child, time::timeout};
 
-const TOOL_NAMES: [&str; 29] = [
+const TOOL_NAMES: [&str; 31] = [
     "adb_list_devices",
     "adb_device_info",
     "adb_display_info",
@@ -32,6 +32,8 @@ const TOOL_NAMES: [&str; 29] = [
     "adb_app_info",
     "adb_get_foreground_app",
     "adb_install_app",
+    "adb_launch_app",
+    "adb_terminate_app",
     "adb_uninstall_app",
     "adb_clear_app_data",
     "adb_tap_on_screen",
@@ -334,6 +336,38 @@ async fn exposes_adb_clear_app_data_schema() -> TestResult {
     );
     assert_eq!(schema["properties"]["serial"]["type"], "string");
     assert_eq!(schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_launch_app_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_launch_app").await?;
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Launch an app using its applicationId")
+    );
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "package"]))
+    );
+    assert_eq!(tool.input_schema["properties"]["serial"]["type"], "string");
+    assert_eq!(tool.input_schema["properties"]["package"]["type"], "string");
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn exposes_adb_terminate_app_schema() -> TestResult {
+    let (client, child, tool) = discover_tool("adb_terminate_app").await?;
+    assert_eq!(
+        tool.description.as_deref(),
+        Some("Stop and terminate a running app")
+    );
+    assert_eq!(
+        tool.input_schema.get("required"),
+        Some(&serde_json::json!(["serial", "package"]))
+    );
+    assert_eq!(tool.input_schema["properties"]["serial"]["type"], "string");
+    assert_eq!(tool.input_schema["properties"]["package"]["type"], "string");
     disconnect(client, child).await
 }
 

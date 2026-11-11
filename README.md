@@ -68,6 +68,8 @@ Tools are grouped by purpose. Detailed behavior and arguments follow below.
 - **`adb_app_info`** - Get version, install, and update details for one app
 - **`adb_get_foreground_app`** - Get the app currently in the foreground
 - **`adb_install_app`** - Install an APK on a selected device
+- **`adb_launch_app`** - Launch an app using its application ID
+- **`adb_terminate_app`** - Force-stop a running app without clearing its data
 - **`adb_uninstall_app`** - Uninstall an app by package name
 - **`adb_clear_app_data`** - Clear an app's data so it starts fresh
 
@@ -307,6 +309,32 @@ Android reports `Success`. This deletes the app's local data and resets its
 state; it does not uninstall the app. ADB failures, invalid package names, an
 unsuccessful package-manager response, and the 30-second timeout produce tool
 errors. This operation is destructive and cannot be undone.
+
+### adb_launch_app
+
+Provide a device serial and an Android application ID:
+
+```json
+{"serial": "emulator-5554", "package": "com.example.app"}
+```
+
+The tool starts the app's launcher activity with Android's `MAIN` and `LAUNCHER`
+intent. The package name is validated and ADB must successfully resolve a
+launchable activity. The command has a 30-second timeout. Launching an app
+changes device state but does not clear app data.
+
+### adb_terminate_app
+
+Provide a device serial and an Android application ID:
+
+```json
+{"serial": "emulator-5554", "package": "com.example.app"}
+```
+
+The tool runs `adb -s <serial> shell am force-stop <package>`. It stops the
+package's processes without uninstalling the app or clearing its data. The
+package name is validated; ADB failures and the 30-second timeout produce tool
+errors.
 
 ### adb_get_foreground_app
 
@@ -710,13 +738,13 @@ Register a local stdio server from your terminal:
 ```sh
 copilot mcp add android-mcp \
 	--env ANDROID_MCP_ADB=/absolute/path/to/android-sdk/platform-tools/adb \
-	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_clear_app_data,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording,adb_tap_on_screen,adb_long_press_on_screen,adb_swipe_on_screen,adb_input_text,adb_press_key \
+	--tools adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_launch_app,adb_terminate_app,adb_install_app,adb_uninstall_app,adb_clear_app_data,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording,adb_tap_on_screen,adb_long_press_on_screen,adb_swipe_on_screen,adb_input_text,adb_press_key \
 	-- /absolute/path/to/android-mcp/target/release/android-mcp
 ```
 
 Quote paths or the complete `KEY=value` argument when they contain spaces.
 Alternatively, start `copilot`, enter `/mcp add`, choose **STDIO**, and provide the
-binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_install_app,adb_uninstall_app,adb_clear_app_data,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording,adb_tap_on_screen,adb_long_press_on_screen,adb_swipe_on_screen,adb_input_text,adb_press_key` as the enabled tools.
+binary path, environment variables, and `adb_list_devices,adb_list_apps,adb_app_info,adb_get_foreground_app,adb_launch_app,adb_terminate_app,adb_install_app,adb_uninstall_app,adb_clear_app_data,adb_device_info,adb_display_info,adb_logcat,adb_take_screenshot,adb_save_screenshot,adb_list_elements_on_screen,adb_get_screen_hierarchy,adb_start_screen_recording,adb_stop_screen_recording,adb_tap_on_screen,adb_long_press_on_screen,adb_swipe_on_screen,adb_input_text,adb_press_key` as the enabled tools.
 Use `/mcp show android-mcp` to inspect status and tools.
 
 The default user configuration is `~/.copilot/mcp-config.json` (or

@@ -41,6 +41,18 @@ fn clear_app_data_request(serial: &str, package: &str) -> CallToolRequestParams 
     request
 }
 
+fn app_process_request(
+    tool_name: &'static str,
+    serial: &str,
+    package: &str,
+) -> CallToolRequestParams {
+    let mut request = CallToolRequestParams::new(tool_name);
+    request.arguments = serde_json::json!({"serial": serial, "package": package})
+        .as_object()
+        .cloned();
+    request
+}
+
 fn create_apk_file(directory: &tempfile::TempDir) -> TestResult<std::path::PathBuf> {
     let apk_path = directory.path().join("sample app.apk");
     std::fs::write(&apk_path, b"APK fixture")?;
@@ -128,6 +140,99 @@ async fn clears_app_data_for_valid_package() -> TestResult {
     .await??;
     assert_ne!(result.is_error, Some(true));
     disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn launches_app_by_application_id() -> TestResult {
+    let (client, child) = connect("launch_app").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(app_process_request(
+            "adb_launch_app",
+            "emulator-5554",
+            "com.example.app",
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn terminates_app_by_application_id() -> TestResult {
+    let (client, child) = connect("terminate_app").await?;
+    let result = timeout(
+        TIMEOUT,
+        client.call_tool(app_process_request(
+            "adb_terminate_app",
+            "emulator-5554",
+            "com.example.app",
+        )),
+    )
+    .await??;
+    assert_ne!(result.is_error, Some(true));
+    disconnect(client, child).await
+}
+
+#[tokio::test]
+async fn rejects_invalid_package_names_for_app_process_tools() -> TestResult {
+    for tool_name in ["adb_launch_app", "adb_terminate_app"] {
+        let mode = if tool_name == "adb_launch_app" {
+            "launch_app"
+        } else {
+            "terminate_app"
+        };
+        let (client, child) = connect(mode).await?;
+        let result = timeout(
+            TIMEOUT,
+            client.call_tool(app_process_request(
+                tool_name,
+                "emulator-5554",
+                "com.example;app",
+            )),
+        )
+        .await??;
+        assert_eq!(result.is_error, Some(true));
+        disconnect(client, child).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn reports_app_process_failures() -> TestResult {
+    for (tool_name, mode, expected) in [
+        (
+            "adb_launch_app",
+            "launch_app_failure",
+            "ADB app launch failed",
+        ),
+        (
+            "adb_terminate_app",
+            "terminate_app_failure",
+            "ADB app termination failed",
+        ),
+    ] {
+        let (client, child) = connect(mode).await?;
+        let result = timeout(
+            TIMEOUT,
+            client.call_tool(app_process_request(
+                tool_name,
+                "emulator-5554",
+                "com.example.app",
+            )),
+        )
+        .await??;
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            result.content[0]
+                .as_text()
+                .ok_or("Expected app-process error")?
+                .text
+                .contains(expected)
+        );
+        disconnect(client, child).await?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
