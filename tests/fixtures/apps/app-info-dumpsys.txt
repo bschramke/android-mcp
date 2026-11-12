@@ -1,0 +1,16 @@
+Activity Resolver Table:
+  Non-Data Actions:
+      android.intent.action.MAIN:
+        a5d76dd com.example.app/.MainActivity filter ff12252
+
+Packages:
+  Package [com.example.app] (254bc11):
+    userId=10168
+    pkg=Package{c42f750 com.example.app}
+    codePath=/data/app/com.example.app/base.apk
+    versionCode=42 minSdk=26 targetSdk=35
+    versionName=2.3.1
+    firstInstallTime=2025-01-15 10:30:45
+    lastUpdateTime=2025-02-20 11:45:00
+    installerPackageName=com.android.vending
+    User 0: ceDataInode=12345 installed=true hidden=false suspended=false

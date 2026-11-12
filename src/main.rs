@@ -1,19 +1,43 @@
-use rmcp::{ServiceExt, tool, tool_router, transport::stdio};
+use rmcp::{ServiceExt, transport::stdio};
+use std::process::ExitCode;
 
-#[derive(Clone)]
-struct HelloWorldServer;
+mod adb;
+mod server;
 
-#[tool_router(server_handler)]
-impl HelloWorldServer {
-    #[tool(description = "Return a Hello World greeting")]
-    fn hello_world(&self) -> String {
-        "Hello, world!".to_owned()
+#[tokio::main]
+async fn main() -> ExitCode {
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Cannot start android-mcp: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let service = HelloWorldServer.serve(stdio()).await?;
-    service.waiting().await?;
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let adb_executable = adb::resolve_executable().await?;
+    let screen_recordings = adb::ScreenRecordingManager::default();
+    let service = server::AndroidMcpServer::new(adb_executable.clone(), screen_recordings.clone())
+        .serve(stdio())
+        .await?;
+    let cancellation = service.cancellation_token();
+    let waiting = service.waiting();
+    tokio::pin!(waiting);
+    let service_result = tokio::select! {
+        result = &mut waiting => result,
+        signal = tokio::signal::ctrl_c() => {
+            if let Err(error) = signal {
+                eprintln!("Cannot listen for Ctrl-C during shutdown: {error}");
+            }
+            cancellation.cancel();
+            waiting.await
+        }
+    };
+
+    for (serial, error) in screen_recordings.stop_all(&adb_executable).await {
+        eprintln!("Cannot stop screen recording for {serial} during shutdown: {error}");
+    }
+    service_result?;
     Ok(())
 }

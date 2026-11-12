@@ -1,0 +1,154 @@
+use rmcp::schemars;
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LogPriority {
+    Verbose,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+}
+
+impl LogPriority {
+    pub(super) fn code(self) -> char {
+        match self {
+            Self::Verbose => 'V',
+            Self::Debug => 'D',
+            Self::Info => 'I',
+            Self::Warn => 'W',
+            Self::Error => 'E',
+            Self::Fatal => 'F',
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceStatus {
+    Online,
+    Offline,
+    Unauthorized,
+    PermissionDenied,
+    Unknown,
+}
+
+impl DeviceStatus {
+    pub(super) fn from_adb_state(state: &str) -> Self {
+        match state {
+            "device" => Self::Online,
+            "offline" => Self::Offline,
+            "unauthorized" => Self::Unauthorized,
+            "no permissions" => Self::PermissionDenied,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct AndroidDevice {
+    pub serial: String,
+    pub status: DeviceStatus,
+    pub adb_state: String,
+    pub model: Option<String>,
+    pub product: Option<String>,
+    pub device: Option<String>,
+    pub transport_id: Option<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct DeviceList {
+    pub devices: Vec<AndroidDevice>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct LogcatSnapshot {
+    pub serial: String,
+    pub format: String,
+    pub output: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct CpuInfo {
+    pub abi: Option<String>,
+    pub abilist: Vec<String>,
+    pub abilist32: Vec<String>,
+    pub abilist64: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct HardwareInfo {
+    pub board: Option<String>,
+    pub hardware: Option<String>,
+    pub soc_manufacturer: Option<String>,
+    pub soc_model: Option<String>,
+    pub cpu: CpuInfo,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct ProductInfo {
+    pub brand: Option<String>,
+    pub manufacturer: Option<String>,
+    pub model: Option<String>,
+    pub device: Option<String>,
+    pub name: Option<String>,
+    pub locale: Option<String>,
+    pub first_api_level: Option<u32>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct AndroidInfo {
+    pub release: Option<String>,
+    pub api_level: Option<u32>,
+    pub security_patch: Option<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct BuildInfo {
+    pub id: Option<String>,
+    pub fingerprint: Option<String>,
+    pub incremental: Option<String>,
+    pub build_type: Option<String>,
+    pub tags: Option<String>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct DeviceInfo {
+    pub serial: String,
+    pub product: ProductInfo,
+    pub hardware: HardwareInfo,
+    pub android: AndroidInfo,
+    pub build: BuildInfo,
+    pub boot_completed: Option<bool>,
+    pub is_emulator: Option<bool>,
+    pub emulator_console_available: Option<bool>,
+    pub display: DisplayInfo,
+}
+
+#[derive(Debug, Default, PartialEq, serde::Serialize)]
+pub struct DisplayInfo {
+    pub physical_resolution_px: Option<ScreenDimensions>,
+    pub override_resolution_px: Option<ScreenDimensions>,
+    pub current_resolution_px: Option<ScreenDimensions>,
+    pub density_dpi: Option<u32>,
+    pub size_dp: Option<ScreenDimensions>,
+    pub rotation_degrees: Option<u16>,
+    pub orientation: Option<DisplayOrientation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct ScreenDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayOrientation {
+    Portrait,
+    Landscape,
+    ReversePortrait,
+    ReverseLandscape,
+}
